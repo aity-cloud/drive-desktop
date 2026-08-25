@@ -11,11 +11,13 @@ stages: [materialize, build, smoke, publish-staging, promote, mirror]
 variables:
   # renovate: datasource=github-tags depName=owncloud/client
   UPSTREAM_TAG: "v7.1.0"
-  # Docker Hub images come through the Harbor pull-through project like the
-  # rest of the estate's CI (see meta/ci/mirror.yml for why); the retry on
-  # the build jobs covers the runner's flaky Docker Hub path when Harbor
-  # has to fill its cache.
-  APPIMAGE_BUILD_IMAGE: "registry.aity.tech/catalog/owncloudci/appimage-build:sles15-amd64"
+  # library/* images come through the Harbor pull-through project like the
+  # rest of the estate's CI (see meta/ci/mirror.yml for why). The catalog
+  # project does NOT proxy other Docker Hub orgs (proven: catalog/owncloudci
+  # -> "not found", pipeline #2788232840), so upstream's build image is
+  # pulled from Docker Hub directly - the runner's IPv6 path there flakes,
+  # which is what the retry blocks are for.
+  APPIMAGE_BUILD_IMAGE: "docker.io/owncloudci/appimage-build:sles15-amd64"
   SMOKE_IMAGE: "registry.aity.tech/catalog/library/ubuntu:24.04"
 
 workflow:
@@ -82,38 +84,34 @@ build:appimage:
     - scripts/materialize.sh staging
     - scripts/materialize.sh production
     - git clone --depth=1 https://invent.kde.org/kde/craftmaster.git "$HOME/craft/CraftMaster/CraftMaster"
-    # one-time Craft setup against the Pin's .craft.ini (either env tree
-    # works - the file is identical in both)
-    - export AITY_MATERIALIZED="$CI_PROJECT_DIR/build/materialized/production"
+    # one-time Craft setup against the Pin's .craft.ini (identical in both
+    # trees); srcDir points at a materialised tree BEFORE any dependency
+    # work so Craft never falls back to cloning upstream itself
+    - export AITY_MATERIALIZED="$CI_PROJECT_DIR/build/materialized/staging"
     - scripts/craft.sh --setup
     - scripts/craft.sh -c --unshelve "$AITY_MATERIALIZED/.craft.shelf"
+    - scripts/craft.sh -c --set srcDir="$AITY_MATERIALIZED" owncloud/owncloud-client
     - scripts/craft.sh -c --set buildNumber=$CI_PIPELINE_IID owncloud/owncloud-client
     - scripts/craft.sh -c --set enableAppImageUpdater=true owncloud/owncloud-client
     - scripts/craft.sh -c --set enableAutoUpdater=true owncloud/owncloud-client
     - scripts/craft.sh -c dev-utils/linuxdeploy
     - scripts/craft.sh -c --install-deps owncloud/owncloud-client
-    - mkdir -p dist
-    - |
-      set -x
-      for AITY_ENV in staging production; do
-        export AITY_MATERIALIZED="$CI_PROJECT_DIR/build/materialized/$AITY_ENV"
-        if [ "$AITY_ENV" = staging ]; then
-          export APPLICATION_EXECUTABLE=aity-drive-staging APPLICATION_SHORTNAME=aitydrive-staging
-        else
-          export APPLICATION_EXECUTABLE=aity-drive APPLICATION_SHORTNAME=aitydrive
-        fi
-        # a fresh build dir per Environment: the CMake cache pins
-        # OEM_THEME_DIR and friends, reusing it across Environments would
-        # leak the previous branding
-        BUILD_DIR=$(scripts/craft.sh -c -q --get buildDir owncloud-client | tail -n1)
-        rm -rf "$BUILD_DIR"
-        scripts/craft.sh -c --set srcDir="$AITY_MATERIALIZED" owncloud/owncloud-client
-        scripts/craft.sh -c --no-cache owncloud/owncloud-client
-        scripts/craft.sh -c --no-cache --package owncloud/owncloud-client
-        mkdir -p "dist/$AITY_ENV"
-        mv "$HOME"/craft/binaries/* "dist/$AITY_ENV/"
-        ls -la "dist/$AITY_ENV/"
-      done
+    # staging Environment build
+    - export APPLICATION_EXECUTABLE=aity-drive-staging APPLICATION_SHORTNAME=aitydrive-staging
+    - scripts/craft.sh -c --no-cache owncloud/owncloud-client
+    - scripts/craft.sh -c --no-cache --package owncloud/owncloud-client
+    - mkdir -p dist/staging && mv "$HOME"/craft/binaries/* dist/staging/ && ls -la dist/staging/
+    # production Environment build - fresh blueprint build dir: the CMake
+    # cache pins OEM_THEME_DIR and friends, reusing it across Environments
+    # would leak the previous branding
+    - BUILD_DIR=$(scripts/craft.sh -c --get buildDir -q owncloud-client | tail -n1)
+    - echo "wiping $BUILD_DIR" && rm -rf "$BUILD_DIR"
+    - export AITY_MATERIALIZED="$CI_PROJECT_DIR/build/materialized/production"
+    - scripts/craft.sh -c --set srcDir="$AITY_MATERIALIZED" owncloud/owncloud-client
+    - export APPLICATION_EXECUTABLE=aity-drive APPLICATION_SHORTNAME=aitydrive
+    - scripts/craft.sh -c --no-cache owncloud/owncloud-client
+    - scripts/craft.sh -c --no-cache --package owncloud/owncloud-client
+    - mkdir -p dist/production && mv "$HOME"/craft/binaries/* dist/production/ && ls -la dist/production/
   after_script:
     - mkdir -p ci-logs && cp -r "$HOME"/craft/*/logs ci-logs/ 2>/dev/null || true
   artifacts:
