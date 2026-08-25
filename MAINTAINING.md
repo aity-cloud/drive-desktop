@@ -97,3 +97,12 @@ Environment) and the `smoke:sync` job in `.gitlab-ci.yml` stays a
   deploy key cannot create releases); promote additionally still needs
   the release-creation + Pages-push implementation and deliberately
   fails until then. Pages on the mirror is enabled by Raul, never by CI.
+
+## Smoke image: libOpenGL.so.0 (hit 2026-08-25)
+
+`AppRun --version` on a bare `ubuntu:24.04` died with `error while loading
+shared libraries: libOpenGL.so.0` even under `QT_QPA_PLATFORM=offscreen`:
+the AppImage bundles Qt but not the GL vendor-neutral dispatch library or
+the X/xcb runtime the platform plugins dlopen. The smoke job installs
+`libopengl0 libglx0` plus the xcb set; if a Bump adds a new Qt platform
+dependency, this apt line is where it shows up first.

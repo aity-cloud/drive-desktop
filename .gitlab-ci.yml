@@ -219,7 +219,10 @@ smoke:appimage:
     max: 2
     when: [runner_system_failure, api_failure, unknown_failure]
   script:
-    - apt-get update -qq && apt-get install -y -qq --no-install-recommends binutils libfontconfig1 libfreetype6 libglib2.0-0 libgl1 libegl1 libxkbcommon0 libdbus-1-3 ca-certificates >/dev/null
+    # libopengl0 provides libOpenGL.so.0, which the Qt6 GUI links even for
+    # `--version` under the offscreen platform; the xcb set is what the
+    # platform plugins dlopen at startup. Bare ubuntu has none of them.
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends binutils libfontconfig1 libfreetype6 libglib2.0-0 libgl1 libegl1 libopengl0 libglx0 libxkbcommon0 libxkbcommon-x11-0 libx11-6 libxcb1 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xkb1 libdbus-1-3 ca-certificates >/dev/null
     - |
       for AITY_ENV in staging production; do
         set -- dist/$AITY_ENV/*.AppImage
