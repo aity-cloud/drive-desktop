@@ -34,6 +34,16 @@ Environment) and the `smoke:sync` job in `.gitlab-ci.yml` stays a
 
 ## Traps
 
+- **`registry.aity.tech/catalog` is a curated mirror, not a Docker Hub
+  proxy.** `catalog/library/alpine` exists; `catalog/library/ubuntu` and
+  `catalog/owncloudci/*` return "not found" (pipelines #2788232840 and
+  #2788463409). Images outside the curated set are pulled from Docker Hub
+  directly and inherit that path's flakiness - hence the retry blocks.
+- **Craft silently no-ops a second build of an installed package.** After
+  the staging build, `craft owncloud/owncloud-client` for production does
+  nothing (already merged) and `--package` archives STAGING files - the
+  production leg must pass `-i` (ignore installed) plus the build-dir
+  wipe. Failed exactly this way in pipeline #2788240525.
 - **Craft's CMake cache leaks branding across Environment builds.** The
   blueprint reuses one build dir; `OEM_THEME_DIR` and other
   `CACHE STRING`s stick. `build:appimage` wipes the blueprint build dir
