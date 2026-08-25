@@ -1,0 +1,326 @@
+# Aity Drive desktop Factory (ADR 0001): materialise the Upstream at the
+# Pin, lay the Overlay on top, build both Environment builds, smoke them,
+# publish. CI is the only builder and publisher; the manual promote job is
+# the only path to a public listing (meta/AGENTS.md).
+#
+# Pipeline shape per meta/specs/aity-drive-v1.md:
+#   materialize -> build -> smoke -> publish-staging -> promote -> mirror
+
+stages: [materialize, build, smoke, publish-staging, promote, mirror]
+
+variables:
+  # renovate: datasource=github-tags depName=owncloud/client
+  UPSTREAM_TAG: "v7.1.0"
+  # Docker Hub images come through the Harbor pull-through project like the
+  # rest of the estate's CI (see meta/ci/mirror.yml for why); the retry on
+  # the build jobs covers the runner's flaky Docker Hub path when Harbor
+  # has to fill its cache.
+  APPIMAGE_BUILD_IMAGE: "registry.aity.tech/catalog/owncloudci/appimage-build:sles15-amd64"
+  SMOKE_IMAGE: "registry.aity.tech/catalog/library/ubuntu:24.04"
+
+workflow:
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+default:
+  tags: [docker, shared]
+  interruptible: true
+
+include:
+  - project: aity-cloud/drive/meta
+    ref: main
+    file: ci/mirror.yml
+
+# ---------------------------------------------------------------------------
+# materialize: prove the Overlay applies against the Pin before spending
+# build time. The build jobs re-run scripts/materialize.sh themselves (a
+# materialised tree is far too big to pass around as an artifact).
+# ---------------------------------------------------------------------------
+materialize:check:
+  stage: materialize
+  image: registry.aity.tech/catalog/library/alpine:3.22
+  retry:
+    max: 2
+    when: [runner_system_failure, api_failure, unknown_failure]
+  script:
+    - apk add --no-cache bash git >/dev/null
+    - |
+      # a release tag must agree with the Pin (tags are v<upstream>-aity-<n>)
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        case "$CI_COMMIT_TAG" in
+          "$UPSTREAM_TAG"-aity-*) echo "tag $CI_COMMIT_TAG matches Pin $UPSTREAM_TAG" ;;
+          *) echo "tag $CI_COMMIT_TAG does not match Pin $UPSTREAM_TAG (expected ${UPSTREAM_TAG}-aity-<n>)"; exit 1 ;;
+        esac
+      fi
+    - bash scripts/materialize.sh staging
+    - bash scripts/materialize.sh production
+    - grep -q 'APPLICATION_NAME       "Aity Drive"' build/materialized/production/branding/OEM.cmake
+    - grep -q 'WITHOUT_AUTO_UPDATER' build/materialized/staging/branding/OEM.cmake
+    - test -f build/materialized/production/branding/aitydrivetheme.h
+    - echo "overlay applies cleanly against $UPSTREAM_TAG for both Environments"
+
+# ---------------------------------------------------------------------------
+# build: branded AppImages for BOTH Environment builds in one job - the
+# expensive part is Craft bootstrapping the Qt toolchain from upstream's
+# binary cache, the per-Environment client rebuild is comparatively cheap.
+# Follows upstream .github/workflows/main.yml (linux-gcc-x86_64 matrix leg):
+# CraftMaster + the Pin's .craft.ini + the owncloud/owncloud-client
+# blueprint with srcDir pointing at the materialised tree.
+# ---------------------------------------------------------------------------
+build:appimage:
+  stage: build
+  image: $APPIMAGE_BUILD_IMAGE
+  needs: [materialize:check]
+  timeout: 3h
+  retry:
+    max: 2
+    when: [runner_system_failure, api_failure, unknown_failure]
+  variables:
+    CRAFT_TARGET: linux-64-gcc
+  script:
+    - scripts/materialize.sh staging
+    - scripts/materialize.sh production
+    - git clone --depth=1 https://invent.kde.org/kde/craftmaster.git "$HOME/craft/CraftMaster/CraftMaster"
+    # one-time Craft setup against the Pin's .craft.ini (either env tree
+    # works - the file is identical in both)
+    - export AITY_MATERIALIZED="$CI_PROJECT_DIR/build/materialized/production"
+    - scripts/craft.sh --setup
+    - scripts/craft.sh -c --unshelve "$AITY_MATERIALIZED/.craft.shelf"
+    - scripts/craft.sh -c --set buildNumber=$CI_PIPELINE_IID owncloud/owncloud-client
+    - scripts/craft.sh -c --set enableAppImageUpdater=true owncloud/owncloud-client
+    - scripts/craft.sh -c --set enableAutoUpdater=true owncloud/owncloud-client
+    - scripts/craft.sh -c dev-utils/linuxdeploy
+    - scripts/craft.sh -c --install-deps owncloud/owncloud-client
+    - mkdir -p dist
+    - |
+      set -x
+      for AITY_ENV in staging production; do
+        export AITY_MATERIALIZED="$CI_PROJECT_DIR/build/materialized/$AITY_ENV"
+        if [ "$AITY_ENV" = staging ]; then
+          export APPLICATION_EXECUTABLE=aity-drive-staging APPLICATION_SHORTNAME=aitydrive-staging
+        else
+          export APPLICATION_EXECUTABLE=aity-drive APPLICATION_SHORTNAME=aitydrive
+        fi
+        # a fresh build dir per Environment: the CMake cache pins
+        # OEM_THEME_DIR and friends, reusing it across Environments would
+        # leak the previous branding
+        BUILD_DIR=$(scripts/craft.sh -c -q --get buildDir owncloud-client | tail -n1)
+        rm -rf "$BUILD_DIR"
+        scripts/craft.sh -c --set srcDir="$AITY_MATERIALIZED" owncloud/owncloud-client
+        scripts/craft.sh -c --no-cache owncloud/owncloud-client
+        scripts/craft.sh -c --no-cache --package owncloud/owncloud-client
+        mkdir -p "dist/$AITY_ENV"
+        mv "$HOME"/craft/binaries/* "dist/$AITY_ENV/"
+        ls -la "dist/$AITY_ENV/"
+      done
+  after_script:
+    - mkdir -p ci-logs && cp -r "$HOME"/craft/*/logs ci-logs/ 2>/dev/null || true
+  artifacts:
+    when: always
+    expire_in: 1 week
+    paths:
+      - dist/
+      - ci-logs/
+
+# Windows: GitLab-hosted runner (ADR 0005), 2 vCPU / 7.5 GB - a known risk
+# the first run measures. ALWAYS manual: it burns purchased compute minutes.
+# Produces the UNSIGNED installer; signing is the sign:windows job (Jsign on
+# Linux against Azure Artifact Signing, runbook
+# meta/docs/runbooks/publisher-accounts.md), never this runner.
+# WIN_ENV selects the Environment build (job variable when playing the job).
+build:windows:
+  stage: build
+  tags: [saas-windows-medium-amd64]
+  needs: []
+  timeout: 3h
+  rules:
+    - when: manual
+      allow_failure: true
+  variables:
+    CRAFT_TARGET: windows-cl-msvc2022-x86_64
+    WIN_ENV: production
+  script:
+    # preflight: fail fast (minutes are purchased) if the toolchain is absent
+    - '& "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -format json | Out-Host'
+    - if (-not (Get-Command python -ErrorAction SilentlyContinue)) { choco install -y python312 --no-progress | Out-Host; refreshenv }
+    - python --version
+    - '& "$env:ProgramFiles\Git\bin\bash.exe" scripts/materialize.sh $env:WIN_ENV'
+    - git clone --depth=1 https://invent.kde.org/kde/craftmaster.git "$env:USERPROFILE/craft/CraftMaster/CraftMaster"
+    - $env:AITY_MATERIALIZED = "$env:CI_PROJECT_DIR/build/materialized/$env:WIN_ENV" -replace '\\','/'
+    - scripts/craft.ps1 --setup
+    - scripts/craft.ps1 -c --unshelve "$env:AITY_MATERIALIZED/.craft.shelf"
+    - scripts/craft.ps1 -c --set srcDir="$env:AITY_MATERIALIZED" owncloud/owncloud-client
+    - scripts/craft.ps1 -c --set buildNumber=$env:CI_PIPELINE_IID owncloud/owncloud-client
+    - scripts/craft.ps1 -c dev-utils/nsis
+    - scripts/craft.ps1 -c --install-deps owncloud/owncloud-client
+    - if ($env:WIN_ENV -eq "staging") { $env:APPLICATION_EXECUTABLE = "aity-drive-staging"; $env:APPLICATION_SHORTNAME = "aitydrive-staging" } else { $env:APPLICATION_EXECUTABLE = "aity-drive"; $env:APPLICATION_SHORTNAME = "aitydrive" }
+    - scripts/craft.ps1 -c --no-cache owncloud/owncloud-client
+    - scripts/craft.ps1 -c --no-cache --package owncloud/owncloud-client
+    - New-Item -ItemType Directory -Force "dist/windows-$env:WIN_ENV" | Out-Null
+    - Copy-Item "$env:USERPROFILE/craft/binaries/*" "dist/windows-$env:WIN_ENV/"
+    - Get-ChildItem "dist/windows-$env:WIN_ENV"
+  artifacts:
+    when: always
+    expire_in: 1 week
+    paths:
+      - dist/
+
+# macOS: UNVERIFIED until the self-managed `macos` runner exists (ADR 0005,
+# runbook meta/docs/runbooks/mac-runner.md). Kept manual so it can never
+# block a pipeline; expect iteration on first run. Unsigned build - Developer
+# ID signing, notarisation and Sparkle keys arrive with M0.
+build:macos:
+  stage: build
+  tags: [macos]
+  needs: []
+  timeout: 3h
+  rules:
+    - when: manual
+      allow_failure: true
+  variables:
+    CRAFT_TARGET: macos-clang-arm64
+    MAC_ENV: production
+  script:
+    - scripts/materialize.sh "$MAC_ENV"
+    - git clone --depth=1 https://invent.kde.org/kde/craftmaster.git "$HOME/craft/CraftMaster/CraftMaster"
+    - export AITY_MATERIALIZED="$CI_PROJECT_DIR/build/materialized/$MAC_ENV"
+    - scripts/craft.sh --setup
+    - scripts/craft.sh -c --unshelve "$AITY_MATERIALIZED/.craft.shelf"
+    - scripts/craft.sh -c --set srcDir="$AITY_MATERIALIZED" owncloud/owncloud-client
+    - scripts/craft.sh -c --set buildNumber=$CI_PIPELINE_IID owncloud/owncloud-client
+    - scripts/craft.sh -c --install-deps owncloud/owncloud-client
+    - |
+      if [ "$MAC_ENV" = staging ]; then
+        export APPLICATION_EXECUTABLE=aity-drive-staging APPLICATION_SHORTNAME=aitydrive-staging
+      else
+        export APPLICATION_EXECUTABLE=aity-drive APPLICATION_SHORTNAME=aitydrive
+      fi
+    - scripts/craft.sh -c --no-cache owncloud/owncloud-client
+    - scripts/craft.sh -c --no-cache --package owncloud/owncloud-client
+    - mkdir -p "dist/macos-$MAC_ENV" && mv "$HOME"/craft/binaries/* "dist/macos-$MAC_ENV/"
+  artifacts:
+    when: always
+    expire_in: 1 week
+    paths:
+      - dist/
+
+# ---------------------------------------------------------------------------
+# smoke: run what was built. Branding facts only - a real sync round-trip is
+# impossible non-interactively at this Pin (owncloudcmd is gone, the GUI is
+# OIDC-only; MAINTAINING.md "Sync smoke gap" has the full investigation).
+# ---------------------------------------------------------------------------
+smoke:appimage:
+  stage: smoke
+  image: $SMOKE_IMAGE
+  needs: [build:appimage]
+  retry:
+    max: 2
+    when: [runner_system_failure, api_failure, unknown_failure]
+  script:
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends binutils libfontconfig1 libfreetype6 libglib2.0-0 libgl1 libegl1 libxkbcommon0 libdbus-1-3 ca-certificates >/dev/null
+    - |
+      for AITY_ENV in staging production; do
+        set -- dist/$AITY_ENV/*.AppImage
+        [ $# -eq 1 ] && [ -f "$1" ] || { echo "expected exactly one AppImage in dist/$AITY_ENV, got: $*"; exit 1; }
+        bash scripts/smoke-appimage.sh "$1" "$AITY_ENV"
+      done
+
+# TODO(sync-smoke): skeleton for the real sync round-trip against
+# https://drive.aity.works, deliberately disabled. What it needs and why it
+# does not exist yet is written down in MAINTAINING.md "Sync smoke gap":
+# no headless client exists at the Pin, so this becomes either an upstream
+# GUI-test harness (Squish, licence needed) or waits for a CLI to return.
+smoke:sync:
+  stage: smoke
+  image: $SMOKE_IMAGE
+  needs: [build:appimage]
+  rules:
+    - when: never
+  script:
+    - echo "see MAINTAINING.md - no non-interactive auth + sync path at this Pin"
+
+# ---------------------------------------------------------------------------
+# publish-staging / promote: tag pipelines only. UNVERIFIED SCAFFOLDS - no
+# release tag has been cut yet and the GitHub releases token
+# (GITHUB_RELEASES_TOKEN, runbook step 5) does not exist yet; both jobs
+# refuse to exist until it does. The mirror's Pages site is enabled by Raul,
+# never from here.
+# ---------------------------------------------------------------------------
+sign:windows:
+  stage: publish-staging
+  image: registry.aity.tech/catalog/library/alpine:3.22
+  needs:
+    - job: build:windows
+      optional: true
+  rules:
+    - if: $CI_COMMIT_TAG
+    - when: manual
+      allow_failure: true
+  script:
+    - |
+      if [ -z "${AZURE_TENANT_ID:-}" ] || [ -z "${AZURE_CLIENT_ID:-}" ] || [ -z "${AZURE_CLIENT_SECRET:-}" ]; then
+        echo "sign:windows: AZURE_* variables are not provisioned yet, leaving the installer UNSIGNED."
+        echo "This is expected until Azure Artifact Signing identity validation completes"
+        echo "(runbook: meta/docs/runbooks/publisher-accounts.md, section 4)."
+        echo "When they exist, this job signs dist/windows-*/ with Jsign:"
+        echo "  jsign --storetype TRUSTEDSIGNING --keystore weu.codesigning.azure.net \\"
+        echo "        --storepass \$(az account get-access-token --resource https://codesigning.azure.net ...) \\"
+        echo "        --alias <account>/<profile> --tsaurl http://timestamp.acs.microsoft.com <installer>"
+        exit 0
+      fi
+    - echo "AZURE_* present but the signing implementation is still TODO (tracked in MAINTAINING.md)" && exit 1
+
+publish:staging-prerelease:
+  stage: publish-staging
+  image: registry.aity.tech/catalog/library/alpine:3.22
+  needs: [build:appimage, smoke:appimage]
+  rules:
+    - if: $CI_COMMIT_TAG && $GITHUB_RELEASES_TOKEN
+  script:
+    # UNVERIFIED skeleton (no tag has run it): staging Environment build to
+    # a pre-release marked staging on the Public Mirror (ADR 0004,
+    # channels table in the spec).
+    - apk add --no-cache curl jq >/dev/null
+    - |
+      set -eu
+      REPO=aity-cloud/drive-desktop
+      api() { curl -sSf -H "Authorization: Bearer $GITHUB_RELEASES_TOKEN" -H "Accept: application/vnd.github+json" "$@"; }
+      RELEASE=$(api -X POST "https://api.github.com/repos/$REPO/releases" \
+        -d "{\"tag_name\":\"$CI_COMMIT_TAG\",\"name\":\"$CI_COMMIT_TAG (staging)\",\"prerelease\":true,\"body\":\"Staging Environment build for verification before promote. Server: https://drive.aity.works\"}")
+      UPLOAD_URL=$(echo "$RELEASE" | jq -r '.upload_url' | sed 's/{.*}//')
+      for f in dist/staging/*; do
+        curl -sSf -H "Authorization: Bearer $GITHUB_RELEASES_TOKEN" -H "Content-Type: application/octet-stream" \
+          --data-binary @"$f" "$UPLOAD_URL?name=$(basename "$f")" >/dev/null
+      done
+      echo "staging pre-release published for $CI_COMMIT_TAG"
+
+promote:
+  stage: promote
+  image: registry.aity.tech/catalog/library/ubuntu:24.04
+  needs: [publish:staging-prerelease]
+  rules:
+    - if: $CI_COMMIT_TAG && $GITHUB_RELEASES_TOKEN
+      when: manual
+      allow_failure: false
+  script:
+    # UNVERIFIED skeleton: the single manual act that makes a release
+    # public (meta/CONTEXT.md "Promote"): production installers + source
+    # tarball to a GitHub Release, regenerated update feeds to the mirror's
+    # Pages branch (Pages itself is enabled by Raul in the repo settings,
+    # not from here).
+    - apt-get update -qq && apt-get install -y -qq curl jq git zsync >/dev/null
+    - |
+      set -eu
+      REPO=aity-cloud/drive-desktop
+      VERSION_FULL="${UPSTREAM_TAG#v}.$CI_PIPELINE_IID"
+      APPIMAGE=$(basename dist/production/*.AppImage)
+      zsyncmake -u "https://github.com/$REPO/releases/download/$CI_COMMIT_TAG/$APPIMAGE" \
+        -o "dist/production/$APPIMAGE.zsync" "dist/production/$APPIMAGE"
+      bash scripts/gen-update-feeds.sh --version "$VERSION_FULL" --tag "$CI_COMMIT_TAG" --appimage "$APPIMAGE"
+      echo "TODO(first promote): create the GitHub Release via the API (like publish:staging-prerelease),"
+      echo "attach dist/production/* + the materialised source tarball (ADR 0004), and push public/ to the"
+      echo "mirror's gh-pages branch with GITHUB_MIRROR_KEY. Kept failing until implemented end-to-end."
+      exit 1
+
+# mirror:github comes from meta/ci/mirror.yml (stage: mirror)

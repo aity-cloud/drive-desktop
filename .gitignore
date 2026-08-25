@@ -1,0 +1,7 @@
+# materialised upstream trees and every build byproduct (ADR 0001: the
+# upstream tree is never committed here)
+build/
+# generated update feeds (scripts/gen-update-feeds.sh output; published to
+# the Public Mirror's Pages by the promote job, never committed)
+public/
+dist/
