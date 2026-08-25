@@ -100,18 +100,21 @@ build:appimage:
     - export APPLICATION_EXECUTABLE=aity-drive-staging APPLICATION_SHORTNAME=aitydrive-staging
     - scripts/craft.sh -c --no-cache owncloud/owncloud-client
     - scripts/craft.sh -c --no-cache --package owncloud/owncloud-client
-    - mkdir -p dist/staging && mv "$HOME"/craft/binaries/* dist/staging/ && ls -la dist/staging/
-    # production Environment build - fresh blueprint build dir: the CMake
-    # cache pins OEM_THEME_DIR and friends, reusing it across Environments
-    # would leak the previous branding
+    - scripts/collect-binaries.sh staging
+    # production Environment build. Two forced resets, both load-bearing:
+    # the blueprint build dir goes away because its CMake cache pins
+    # OEM_THEME_DIR and friends, and craft gets -i (--ignore-installed)
+    # because owncloud-client is already merged from the staging build and
+    # would otherwise silently no-op, leaving staging files in the archive
+    # (exactly what failed in pipeline #2788240525)
     - BUILD_DIR=$(scripts/craft.sh -c --get buildDir -q owncloud-client | tail -n1)
     - echo "wiping $BUILD_DIR" && rm -rf "$BUILD_DIR"
     - export AITY_MATERIALIZED="$CI_PROJECT_DIR/build/materialized/production"
     - scripts/craft.sh -c --set srcDir="$AITY_MATERIALIZED" owncloud/owncloud-client
     - export APPLICATION_EXECUTABLE=aity-drive APPLICATION_SHORTNAME=aitydrive
-    - scripts/craft.sh -c --no-cache owncloud/owncloud-client
+    - scripts/craft.sh -c --no-cache -i owncloud/owncloud-client
     - scripts/craft.sh -c --no-cache --package owncloud/owncloud-client
-    - mkdir -p dist/production && mv "$HOME"/craft/binaries/* dist/production/ && ls -la dist/production/
+    - scripts/collect-binaries.sh production
   after_script:
     - mkdir -p ci-logs && cp -r "$HOME"/craft/*/logs ci-logs/ 2>/dev/null || true
   artifacts:
