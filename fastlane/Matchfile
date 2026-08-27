@@ -1,0 +1,8 @@
+# The shared certificates repo of the drive subgroup (spec decision 7). The
+# iOS Factory writes the App Store material; this Factory uses the same
+# store for the Developer ID certificate that signs the macOS client.
+# Branch `master` is match's own default and where the store actually lives.
+git_url(ENV["MATCH_GIT_URL"] || "git@gitlab.com:aity-cloud/drive/certificates.git")
+git_branch(ENV["MATCH_GIT_BRANCH"] || "master")
+storage_mode("git")
+type("developer_id")

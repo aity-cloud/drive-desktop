@@ -106,3 +106,24 @@ the AppImage bundles Qt but not the GL vendor-neutral dispatch library or
 the X/xcb runtime the platform plugins dlopen. The smoke job installs
 `libopengl0 libglx0` plus the xcb set; if a Bump adds a new Qt platform
 dependency, this apt line is where it shows up first.
+
+## macOS identity and signing (2026-08-27)
+
+The macOS bundle id is `tech.aity.drive.desktop` (staging:
+`.desktop.staging`), NOT the iOS app's `tech.aity.drive`. They are
+different binaries from different codebases and both can sit on one Apple
+Silicon Mac (the iOS app runs there too), so one shared identifier is a
+LaunchServices collision. Changed before anything shipped.
+
+Signing is Developer ID, never App Store: the sandbox forbids this
+client's Finder integration and arbitrary-filesystem sync, and GPLv2 has
+no App Store exception. `scripts/sign-macos.sh` pulls the Developer ID
+certificate from the shared match store (that is the only reason this
+Factory has a Gemfile and a two-file fastlane setup), codesigns with
+`--options runtime` (the notary service refuses anything else), then
+notarises with `notarytool` and staples. Missing credentials skip the
+whole step loudly rather than producing a quietly unsigned artifact.
+
+Developer ID is gated by ROLE (Account Holder), not by membership type -
+an individual Apple account signs and notarises fine.
+

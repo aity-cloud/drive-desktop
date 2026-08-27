@@ -1,0 +1,31 @@
+# One lane, one job: put the Developer ID Application certificate in the
+# runner's temporary keychain so scripts/sign-macos.sh can codesign with it.
+# Signing and notarisation themselves stay in that script - they are plain
+# codesign/notarytool calls and do not need fastlane.
+opt_out_usage
+
+lane :developer_id_certificate do
+  %w[ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8 AITY_TEAM_ID MATCH_PASSWORD].each do |var|
+    UI.user_error!("#{var} is not set - see meta/docs/runbooks/publisher-accounts.md") if ENV[var].to_s.empty?
+  end
+
+  # Temporary keychain on the runner: signing material never touches the
+  # login keychain (meta/docs/runbooks/mac-runner.md).
+  setup_ci
+
+  api_key = app_store_connect_api_key(
+    key_id: ENV.fetch("ASC_KEY_ID"),
+    issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+    key_filepath: ENV.fetch("ASC_KEY_P8")
+  )
+
+  # A Developer ID app needs a provisioning profile only for profile-backed
+  # entitlements, which this client does not use - certificate only.
+  match(
+    type: "developer_id",
+    skip_provisioning_profiles: true,
+    readonly: false,
+    team_id: ENV.fetch("AITY_TEAM_ID"),
+    api_key: api_key
+  )
+end

@@ -207,6 +207,10 @@ build:macos:
     - scripts/craft.sh -c --no-cache owncloud/owncloud-client
     - scripts/craft.sh -c --no-cache --package owncloud/owncloud-client
     - mkdir -p "dist/macos-$MAC_ENV" && mv "$HOME"/craft/binaries/* "dist/macos-$MAC_ENV/"
+    # Developer ID signing + notarisation, when the credentials are present.
+    # Skipped with a loud message otherwise, so an unsigned build is still a
+    # usable artifact and never a silent one.
+    - bash scripts/sign-macos.sh "dist/macos-$MAC_ENV"
   artifacts:
     when: always
     expire_in: 1 week

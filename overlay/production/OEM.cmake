@@ -9,7 +9,12 @@ set(APPLICATION_SHORTNAME  "aitydrive")
 set(APPLICATION_EXECUTABLE "aity-drive")
 set(APPLICATION_DOMAIN     "aity.tech")
 set(APPLICATION_VENDOR     "AITY CLOUD SRL")
-set(APPLICATION_REV_DOMAIN "tech.aity.drive")
+# Distinct from the iOS app's id (tech.aity.drive): they are
+# different binaries from different codebases, and on an Apple Silicon Mac
+# both can be installed at once (the iOS app runs there too), which one
+# shared identifier turns into a LaunchServices collision. Registered as
+# its own App ID, signed with Developer ID, never App Store.
+set(APPLICATION_REV_DOMAIN "tech.aity.drive.desktop")
 set(APPLICATION_ICON_NAME  "aitydrive")
 set(APPLICATION_VIRTUALFILE_SUFFIX "aitydrive" CACHE STRING "Virtual file suffix (not including the .)")
 
