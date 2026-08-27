@@ -126,6 +126,13 @@ build:appimage:
 
 # Windows: GitLab-hosted runner (ADR 0005), 2 vCPU / 7.5 GB - a known risk
 # the first run measures. ALWAYS manual: it burns purchased compute minutes.
+#
+# This job is THE ONLY sanctioned gitlab.com instance-runner job in the entire
+# aity-cloud group (workspace AGENTS.md "GitLab runners: our own, always"),
+# and it exists only because we own no Windows runner. drive/desktop is
+# therefore the only project with shared_runners_enabled=true; every other
+# project and subgroup has instance runners disabled. If you ever move this
+# build to a self-hosted Windows runner, turn that project toggle back off.
 # Produces the UNSIGNED installer; signing is the sign:windows job (Jsign on
 # Linux against Azure Artifact Signing, runbook
 # meta/docs/runbooks/publisher-accounts.md), never this runner.
