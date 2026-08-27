@@ -65,6 +65,16 @@ harness this investigation exists to avoid
   the client, and Tier 1 already does that properly.
 
 ### 4. Blocking defect found while investigating: staging 403s the desktop
+
+   **FIXED 2026-08-27.** The staging gateway had no loopback exception at
+   all (prod's rule 10023 listed only ownCloud's stock client ids and the
+   staging twin was missing entirely), so every loopback redirect got a
+   bare 403 - not just ours. Both gateways now list the drive ids and
+   staging has the 10023/10024 twin
+   (infra/harvester-cluster `platform/istio/values.yaml`). Verified end to
+   end: `drive-desktop` completes authorization, token exchange, a rotated
+   refresh, and oCIS accepts the token. Removed from `KNOWN_BLOCKED` in
+   meta's `contract/drive_client_auth.py`.
 client's login
 
 Independent of everything above, the desktop client **cannot log in to
