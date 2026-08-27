@@ -4,33 +4,104 @@ Traps this Factory has actually hit, and the standing gaps. The generic
 loop (watch, response targets, per-Bump checklist) is
 `../meta/docs/maintenance.md`; the Pin mechanics are `UPSTREAM.md`.
 
-## Sync smoke gap (standing, investigated 2026-08-25)
+## Sync smoke gap: RE-INVESTIGATED 2026-08-27, still not worth building
 
-The spec wants an `owncloudcmd` sync round-trip against
-`https://drive.aity.works` as the desktop smoke. **That is impossible at
-Pin v7.1.0**: upstream removed `owncloudcmd` (only the stale
-`owncloudcmd.desktop.in` remains in the tree); the only client is the GUI,
-and its auth is OIDC through a real browser + loopback redirect.
+Verdict: **do not build a desktop sync smoke at this Pin.** The three routes
+that could make one honest are all closed, and one of them is closed by a
+staging defect that has to be fixed anyway (below). Revisit when upstream
+ships a CLI again, or when someone buys a Squish licence.
 
-What was investigated, so nobody re-treads it:
+The spec asks for an `owncloudcmd` sync round-trip against
+`https://drive.aity.works`. That was already known to be impossible at Pin
+v7.1.0; what follows is the evidence, re-checked against the artifact we
+actually ship rather than against docs.
 
-- Non-interactive TOKENS are obtainable: the staging seed tooling
-  (`infra/harvester-cluster/scripts/_drive_lib.py`, read-only) does a
-  Keycloak password grant with client `drive` and the `drive-test-*`
-  users. But there is no headless CONSUMER for such a token in the client
-  at this Pin - no CLI, and the GUI's account wiring cannot be fed a
-  bearer token from outside.
-- A raw WebDAV round-trip with such a token (curl) would test the server,
-  not the built client - worthless as a Client smoke.
-- Upstream's own end-to-end GUI tests use Squish (licence-gated,
-  `.github/workflows/branded-client.yml` and `gui-tests.yml`); adopting
-  that harness is the real path to a sync smoke if one is ever needed
-  beyond the mobile Clients' coverage.
+### 1. There is no headless entry point in the shipped AppImage
 
-Until then `smoke:appimage` verifies branding facts (binary runs and
-identifies itself, baked server URL + OIDC client id, updater posture per
+Checked by unpacking `dist/staging/aity-drive-staging-7.1.0.7-linux-x86_64.AppImage`
+from build job 16141478570 (`--appimage-extract`), not by reading the tree:
+
+- `usr/bin/` contains exactly ONE program, `aity-drive-staging`. No
+  `owncloudcmd`, no second tool, nothing else executable but `AppRun` and a
+  couple of stray perl scripts from the bundled OpenSSL.
+- `AppRun --help` offers `-s/--show`, `-q/--quit`, `--logfile`, `--logdir`,
+  `--logflush`, `--logdebug`, `--debug`. There is no sync, no account and no
+  non-interactive mode among them.
+- The source agrees: the only `add_executable` in `src/` is
+  `src/gui/CMakeLists.txt:154`, `add_executable(owncloud main.cpp)` (plus the
+  crash reporter and a test helper). `owncloudcmd.desktop.in` survives in the
+  tree as a leftover with nothing behind it.
+
+### 2. Upstream's GUI harness is Squish, and Squish alone is not enough
+
+`test/gui/suite.conf` is a Squish suite (`WRAPPERS=Qt`, `AUT=owncloud`,
+`OBJECTMAPSTYLE=script`) and `.github/workflows/gui-tests.yml` runs it inside
+`owncloudci/squish:fedora-42-8.1.0-qt68x-linux64`. Squish is commercial and
+licence-gated, so that harness is not available to us.
+
+Worth knowing before anyone prices a licence: **Squish would only be half of
+it.** `test/gui/requirements.txt` now pulls `pytest-playwright` and the
+Makefile runs `playwright install chromium`, because
+`shared/scripts/helpers/WebUIHelper.py` drives the OIDC login page with
+Playwright while Squish drives the Qt GUI. Adopting the harness means adopting
+both halves.
+
+### 3. Seeding the config plus a token: possible, but exactly the brittle
+harness this investigation exists to avoid
+
+- Accounts live in `owncloud.cfg` (QSettings) via
+  `AccountManager::saveAccount`, and the tokens go through QtKeychain
+  (`CredentialManager::set`, service name = `Theme::instance()->appName()`,
+  i.e. the branded app name). On Linux that means a Secret Service daemon has
+  to run in CI before anything can be seeded at all.
+- The killer is `AccountManager::loadAccountHelper`: an account whose stored
+  `capabilities` blob is missing or lacks spaces support is not just ignored,
+  it is **deleted from the config** (`settings.remove("")`). So a seeded
+  account has to carry a full, valid serialised capabilities map captured from
+  a real login - a private serialisation format, re-verified on every Bump.
+- And it still would not be a sync test: `Folders` entries, a sync journal and
+  a running GUI event loop would all have to be reproduced before a single
+  file moved. A raw WebDAV round trip with such a token tests the server, not
+  the client, and Tier 1 already does that properly.
+
+### 4. Blocking defect found while investigating: staging 403s the desktop
+client's login
+
+Independent of everything above, the desktop client **cannot log in to
+staging today**. Its redirect URIs are loopback (`http://127.0.0.1:*`,
+`http://localhost:*`, identity table) and the edge rejects any authorization
+request carrying one:
+
+```
+GET https://auth.aity.works/realms/aity/protocol/openid-connect/auth
+    ?client_id=drive-desktop&...&redirect_uri=<uri>
+
+  redirect_uri=https%3A%2F%2Fexample.com      -> 400  (Keycloak: invalid redirect)
+  redirect_uri=http%3A%2F%2Flocalhost%3A51234 -> 403  (server: istio-envoy, empty body)
+  redirect_uri=http%3A%2F%2F127.0.0.1%3A51234 -> 403  (server: istio-envoy, empty body)
+  redirect_uri=http%3A%2F%2F127.0.0.1%2F      -> 403  (server: istio-envoy, empty body)
+```
+
+The 400 proves the request reaches Keycloak when the redirect is not
+loopback; the 403s come from the gateway with an empty body, which is the WAF
+signature. The same probe against `drive-ios` and `drive-android` (custom
+schemes, not loopback) completes the whole authorization-code + PKCE flow and
+oCIS accepts the resulting token, so this is specific to the loopback
+redirect, not to the client or the realm.
+
+Consequence: a human cannot test the desktop client against staging either,
+which makes this a release blocker for `drive/desktop` long before it is a
+testing problem. It is the open "staging WAF blocks loopback OIDC" decision;
+the fix belongs in the gateway's WAF rules, not here.
+
+### What the Factory tests instead
+
+`smoke:appimage` verifies the branding facts (the binary runs and identifies
+itself, the baked server URL and OIDC client id, the updater posture per
 Environment) and the `smoke:sync` job in `.gitlab-ci.yml` stays a
-`when: never` skeleton pointing here.
+`when: never` skeleton pointing here. The Clients' end-to-end sync behaviour
+is covered on iOS and Android (Tier 2), where the login can be driven; the
+server contract is covered by Tier 1 (`meta/contract/drive_contract.py`).
 
 ## Traps
 
