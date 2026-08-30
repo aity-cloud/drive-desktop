@@ -40,11 +40,30 @@ PREFIX="${1:-$HOME/craft/CraftMaster/${CRAFT_TARGET:?set CRAFT_TARGET}}"
 
 echo "== DMG headless packaging, prefix $PREFIX"
 
-mapfile -t FILES < <(find "$PREFIX" -name MacDMGPackager.py -not -path '*/downloads/*' 2>/dev/null)
+# find(1) does NOT descend into symlinked directories without -L, and
+# CraftMaster wires per-target roots together with symlinks - which is why
+# the first version of this script found nothing at all. Search follows
+# links, from the target root and from the shared CraftMaster root above it.
+mapfile -t FILES < <(
+    find -L "$PREFIX" "$(dirname "$PREFIX")" -maxdepth 8 -name MacDMGPackager.py \
+        -not -path '*/downloads/*' -not -path '*/build/*' 2>/dev/null | sort -u
+)
+
 if [ "${#FILES[@]}" -eq 0 ]; then
-    echo "   no MacDMGPackager.py under $PREFIX - craft-core layout changed?"
+    echo "   no MacDMGPackager.py found. Searched (following symlinks):"
+    echo "     $PREFIX"
+    echo "     $(dirname "$PREFIX")"
+    echo "   What is actually there, so the next run does not have to guess:"
+    ls -la "$PREFIX" 2>/dev/null | sed 's/^/     /'
+    echo "   Any Packager directory:"
+    find -L "$(dirname "$PREFIX")" -maxdepth 8 -type d -name Packager 2>/dev/null | sed 's/^/     /' | head
+    echo "   Any craft-core checkout:"
+    find -L "$(dirname "$PREFIX")" -maxdepth 6 -type d -name craft-core -o -maxdepth 6 -type d -name bin 2>/dev/null | sed 's/^/     /' | head
     exit 1
 fi
+
+echo "   candidates:"
+printf '     %s\n' "${FILES[@]}"
 
 python3 - "${FILES[@]}" <<'PY'
 import pathlib, re, sys
