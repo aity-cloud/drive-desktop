@@ -226,6 +226,10 @@ build:macos:
     # edits Qt's cmake modules in the Craft prefix, and is a no-op the moment
     # a Qt bump or an SDK makes it unnecessary. Full story in the script.
     - bash scripts/mac-sdk-quirks.sh
+    # Craft packages with create-dmg, which drives Finder over AppleScript.
+    # A LaunchAgent cannot script Finder, so that times out (-1712) AFTER the
+    # whole client has already built. Full story in the script.
+    - bash scripts/mac-dmg-headless.sh
     - |
       if [ "$MAC_ENV" = staging ]; then
         export APPLICATION_EXECUTABLE=aity-drive-staging APPLICATION_SHORTNAME=aitydrive-staging

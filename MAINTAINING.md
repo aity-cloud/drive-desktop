@@ -312,3 +312,31 @@ marked).
 
 When adding a step to `build:macos`, ask what it leaves behind in `$HOME` and
 what happens when it finds that thing already there.
+
+## macOS: `Finder got an error: AppleEvent timed out. (-1712)` (2026-08-30)
+
+The run after the AGL fix compiled and linked all 425 objects and then died
+in packaging. ownCloud's craft-core fork packages with `create-dmg`, which
+drives FINDER over AppleScript to position the icons and set the window
+background. That needs a logged-in Aqua session AND macOS Automation (TCC)
+permission for the calling process; a GitLab LaunchAgent has neither
+reliably - the TCC prompt has nobody to answer it, so the Apple event just
+times out after the expensive part of the job is already done.
+
+`scripts/mac-dmg-headless.sh` adds create-dmg's own `--skip-jenkins`, which
+upstream documents as "skip Finder-prettifying AppleScript, useful in Sandbox
+and non-GUI environments". The DMG still carries the app and the
+`/Applications` drop link; what is lost is icon positioning and the
+background image.
+
+**Deliberately NOT fixed by granting Automation permission.** That would make
+the build work only while somebody is logged in with Finder responsive, and
+hang for five minutes when they are not. A release build must not depend on a
+desktop session, and the cosmetics are worth strictly less than that.
+
+**The better fix, when the window layout starts to matter:** KDE's craft-core
+uses `dmgbuild` instead - pure Python, no Finder at all, and it keeps the
+background and icon positions. Switching means replacing that packager's
+`createPackage` wholesale, which is more than a quirk workaround deserves
+today. The script already recognises the dmgbuild variant and no-ops on it,
+so a craft-core bump that adopts it needs no further action here.
