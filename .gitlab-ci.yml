@@ -191,7 +191,23 @@ build:macos:
     MAC_ENV: production
   script:
     - scripts/materialize.sh "$MAC_ENV"
-    - git clone --depth=1 https://invent.kde.org/kde/craftmaster.git "$HOME/craft/CraftMaster/CraftMaster"
+    # The macos runner is a SHELL executor on Raul's laptop: $HOME survives
+    # between jobs, so nothing here may assume a clean machine. A plain clone
+    # worked on the first run and failed every run after it with "destination
+    # path already exists". Re-point the existing checkout instead, and fall
+    # back to a fresh clone if it is not a usable git dir.
+    - |
+      CM="$HOME/craft/CraftMaster/CraftMaster"
+      if git -C "$CM" rev-parse --git-dir >/dev/null 2>&1; then
+        echo "CraftMaster present, updating in place"
+        git -C "$CM" fetch --depth=1 origin HEAD
+        git -C "$CM" reset --hard FETCH_HEAD
+        git -C "$CM" clean -fdx
+      else
+        echo "CraftMaster absent or unusable, cloning fresh"
+        rm -rf "$CM"
+        git clone --depth=1 https://invent.kde.org/kde/craftmaster.git "$CM"
+      fi
     - export AITY_MATERIALIZED="$CI_PROJECT_DIR/build/materialized/$MAC_ENV"
     - scripts/craft.sh --setup
     - scripts/craft.sh -c --unshelve "$AITY_MATERIALIZED/.craft.shelf"
@@ -209,9 +225,24 @@ build:macos:
       else
         export APPLICATION_EXECUTABLE=aity-drive APPLICATION_SHORTNAME=aitydrive
       fi
+    # Craft's package destination is $HOME/craft/binaries, which SURVIVES
+    # between jobs on this shell runner. Emptying it first is what stops a
+    # previous run's .dmg from being collected, artifacted and eventually
+    # signed as if this pipeline had produced it - a stale artifact that
+    # looks entirely legitimate is worse than a failed job.
+    - rm -rf "$HOME/craft/binaries" && mkdir -p "$HOME/craft/binaries"
     - scripts/craft.sh -c --no-cache owncloud/owncloud-client
     - scripts/craft.sh -c --no-cache --package owncloud/owncloud-client
-    - mkdir -p "dist/macos-$MAC_ENV" && mv "$HOME"/craft/binaries/* "dist/macos-$MAC_ENV/"
+    - |
+      mkdir -p "dist/macos-$MAC_ENV"
+      set -- "$HOME"/craft/binaries/*
+      if [ "$#" -eq 0 ] || [ ! -e "$1" ]; then
+        echo "craft --package produced nothing in $HOME/craft/binaries"
+        exit 1
+      fi
+      echo "collected $# artifact(s):"
+      for f in "$@"; do echo "  $(basename "$f")"; done
+      mv "$@" "dist/macos-$MAC_ENV/"
     # Developer ID signing + notarisation, when the credentials are present.
     # Skipped with a loud message otherwise, so an unsigned build is still a
     # usable artifact and never a silent one.

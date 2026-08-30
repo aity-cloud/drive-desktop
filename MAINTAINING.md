@@ -260,3 +260,36 @@ message is not in this tree at all - it comes from outside the materialised
 source, so it is the Craft blueprint or ECM doing the `.icns` assembly.
 UNVERIFIED and macOS-only: confirm the sidebar icon on the built `.app`
 once the link succeeds, rather than theorising about it now.
+
+## The macos runner is a SHELL executor: nothing may assume a clean machine
+
+GitLab wipes the PROJECT directory between jobs and nothing else. `$HOME` on
+Raul's laptop persists, so every step that writes outside `$CI_PROJECT_DIR`
+has to be written twice-runnable. The second `build:macos` run died on the
+second line for exactly this reason:
+
+    fatal: destination path '/Users/raul/craft/CraftMaster/CraftMaster'
+    already exists and is not an empty directory
+
+Two places are now hardened, and they fail in opposite ways:
+
+- **The CraftMaster checkout** fails LOUDLY on the second run. Fixed by
+  updating an existing checkout in place and only cloning when there is no
+  usable git dir there.
+- **`$HOME/craft/binaries`**, Craft's package destination, fails SILENTLY:
+  the job used to `mv "$HOME"/craft/binaries/*` into `dist/`, so a previous
+  run's `.dmg` would be collected, artifacted and eventually signed and
+  notarised as if this pipeline had produced it. The directory is now emptied
+  before packaging, and the collection step fails if `--package` produced
+  nothing instead of silently shipping whatever was lying around. This one
+  had never fired yet - it was waiting for the first run that got far enough
+  to package twice.
+
+The rest of the job is deliberately left alone: `materialize.sh` writes only
+under the project dir, and Craft's own `--setup` / `--unshelve` / `--set` are
+built for persistent CI workspaces. `scripts/mac-sdk-quirks.sh` is idempotent
+by construction (it re-checks the linker and skips files it has already
+marked).
+
+When adding a step to `build:macos`, ask what it leaves behind in `$HOME` and
+what happens when it finds that thing already there.
