@@ -55,7 +55,20 @@ if [ -n "$IDENTITY" ]; then
   echo "sign-macos: Developer ID identity already in the keychain: $IDENTITY"
   NEED_MATCH=0
 else
-  echo "sign-macos: no Developer ID Application identity in the keychain - will try the match store"
+  echo "sign-macos: no Developer ID Application identity in the keychain."
+  # Ground truth, because "not found" has two very different causes and they
+  # need opposite fixes: the certificate may be a different TYPE (an "Apple
+  # Development" or "Apple Distribution" certificate is NOT a Developer ID
+  # one and cannot notarise), or it may exist and simply be invisible to this
+  # process - a LaunchAgent runner does not necessarily carry the desktop
+  # session's keychain search list.
+  echo "sign-macos: identities this process can see:"
+  security find-identity -v -p codesigning 2>&1 | sed 's/^/    /' || true
+  echo "sign-macos: keychains in its search list:"
+  security list-keychains -d user 2>&1 | sed 's/^/    /' || true
+  echo "sign-macos: identities in the login keychain specifically:"
+  security find-identity -v -p codesigning "$HOME/Library/Keychains/login.keychain-db" 2>&1 | sed 's/^/    /' || true
+  echo "sign-macos: will try the match store instead"
   NEED_MATCH=1
 fi
 
