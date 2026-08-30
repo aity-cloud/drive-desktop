@@ -392,3 +392,55 @@ The general rule the third macOS iteration in a row taught: when a step near
 the END of a long job depends only on things known at the START, check it at
 the start. The desktop factory's build is ~6 minutes; the iOS one is far
 worse.
+
+## Signing: the keychain first, match only as a fallback (2026-08-30)
+
+The run that got through build, DMG and match's git store ended with Apple
+refusing:
+
+    This request is forbidden for security reasons -
+    This operation can only be performed by the Account Holder.
+
+**An App Store Connect API key is not the Account Holder**, whatever role it
+carries, and creating a Developer ID certificate is Account-Holder-only. No
+retry helps and no keychain prompt is involved: that is an HTTP response from
+Apple's portal. fastlane reaches the same conclusion by itself and prints
+"Enabling match readonly mode" in every CI run.
+
+The note in this file and in the checkpoint said "Developer ID is gated by
+ROLE (Account Holder), not membership type - the individual Apple account can
+do it today". True, and never the problem; what it omitted is that the
+account holder has to be the one ASKING, which means Apple ID login with 2FA
+from a Mac, not an API key from a runner.
+
+So `sign-macos.sh` now looks in the KEYCHAIN first. Raul's Mac already holds
+a `Developer ID Application: Raul Bag` certificate, and when an identity is
+present the script needs no match store, no fastlane and no gems at all - it
+just signs. `MACOS_SIGN_IDENTITY` overrides the search when several
+identities exist. match remains as the fallback for a machine that holds no
+certificate, and its lane is `readonly: true` permanently.
+
+Consequences worth knowing:
+
+- The credential requirements now split. Notarisation always needs
+  `ASC_KEY_ID` / `ASC_ISSUER_ID` / `ASC_KEY_P8`; the match variables are
+  required ONLY when a certificate has to be fetched. A machine with the
+  certificate and the API key can sign and notarise with nothing else.
+- **codesign needs the private KEY**, so macOS asks permission the first time
+  a process that is not Xcode uses it. A LaunchAgent runner cannot answer
+  that prompt unattended, and a Deny fails the job at signing. Allow it once
+  for that keychain and it stops asking.
+- `developer_id_certificate_bootstrap` exists for the day a second machine
+  needs the certificate in the store. Certificates cap at 5 per account and
+  revoking one invalidates everything already signed with it, so it is a
+  once-ever command, not a refresh.
+
+### While here: the runner's gem env is split
+
+    USER INSTALLATION DIRECTORY: /Users/raul/.gem/ruby/4.0.0
+    EXECUTABLE DIRECTORY:        /opt/homebrew/lib/ruby/gems/4.0.0/bin
+
+which is why `bundle install` reports success and `bundle exec fastlane` then
+cannot find the binary. The script puts the user gem bin dir on PATH before
+trying anything, so the fallback installs fastlane at most once per machine
+rather than once per invocation. On the keychain path it never runs at all.

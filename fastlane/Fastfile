@@ -1,9 +1,14 @@
-# One lane, one job: put the Developer ID Application certificate in the
-# runner's temporary keychain so scripts/sign-macos.sh can codesign with it.
-# Signing and notarisation themselves stay in that script - they are plain
-# codesign/notarytool calls and do not need fastlane.
+# Two lanes, one certificate. `developer_id_certificate` runs in CI and only
+# FETCHES; `developer_id_certificate_bootstrap` is run once by a human and is
+# the only thing that can create it. Why they must be separate is an Apple
+# rule, not a preference - see the readonly note below.
+#
+# Signing and notarisation themselves stay in scripts/sign-macos.sh: they are
+# plain codesign/notarytool calls and do not need fastlane.
 opt_out_usage
 
+# CI lane: put the Developer ID Application certificate in the runner's
+# temporary keychain so scripts/sign-macos.sh can codesign with it.
 lane :developer_id_certificate do
   %w[ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8 AITY_TEAM_ID MATCH_PASSWORD].each do |var|
     UI.user_error!("#{var} is not set - see meta/docs/runbooks/publisher-accounts.md") if ENV[var].to_s.empty?
@@ -19,37 +24,84 @@ lane :developer_id_certificate do
     key_filepath: ENV.fetch("ASC_KEY_P8")
   )
 
-  # A Developer ID app needs a provisioning profile only for profile-backed
-  # entitlements, which this client does not use - certificate only.
-  #
-  # app_identifier: [] is deliberate, and both halves of that matter. Read
-  # match's own runner.rb before changing it:
-  #
-  #   app_identifiers.each do |app_identifier|
-  #     spaceship.bundle_identifier_exists(...)   # "Verify the App ID"
-  #   end
-  #   cert_id = fetch_certificate(...)
-  #
-  # That loop runs BEFORE the certificate work and does NOT respect
-  # skip_provisioning_profiles. So:
-  #
-  #   - omitting the option fails validation outright ("No value found for
-  #     'app_identifier'"): it has no optional: true, and its default comes
-  #     from an Appfile this Factory does not have;
-  #   - passing the REAL ids fails with "Couldn't find bundle identifier
-  #     'tech.aity.drive.desktop'", because a Developer ID app needs no App
-  #     ID registered in the portal and ours are not - both hit 2026-08-30;
-  #   - an empty ARRAY is a value, so validation passes, and the loop then
-  #     iterates over nothing and falls through to the certificate.
-  #
-  # Which is exactly right: this lane wants a Developer ID CERTIFICATE and
-  # no app-specific material whatsoever.
+  begin
+    # A Developer ID app needs a provisioning profile only for profile-backed
+    # entitlements, which this client does not use - certificate only.
+    #
+    # app_identifier: [] is deliberate. Read match's own runner.rb before
+    # changing it:
+    #
+    #   app_identifiers.each do |app_identifier|
+    #     spaceship.bundle_identifier_exists(...)   # "Verify the App ID"
+    #   end
+    #   cert_id = fetch_certificate(...)
+    #
+    # That loop runs BEFORE the certificate work and does NOT respect
+    # skip_provisioning_profiles. Omitting the option fails validation
+    # outright ("No value found for 'app_identifier'" - it carries no
+    # optional: true and its default comes from an Appfile this Factory does
+    # not have), while passing the REAL ids fails with "Couldn't find bundle
+    # identifier 'tech.aity.drive.desktop'", because a Developer ID app needs
+    # no App ID registered in the portal and ours are not. Both hit
+    # 2026-08-30. An empty ARRAY is a value, so validation passes and the
+    # loop iterates over nothing - straight to the certificate, which is all
+    # this lane wants.
+    #
+    # READONLY, permanently. CI can NEVER mint this certificate: creating a
+    # Developer ID certificate is an Account Holder operation, and an App
+    # Store Connect API key is not the Account Holder no matter which role it
+    # carries. Apple answers "This request is forbidden for security reasons
+    # - This operation can only be performed by the Account Holder", and no
+    # amount of retrying changes that. fastlane's setup_ci independently
+    # forces readonly in CI for the same reason.
+    match(
+      type: "developer_id",
+      app_identifier: [],
+      skip_provisioning_profiles: true,
+      readonly: true,
+      team_id: ENV.fetch("AITY_TEAM_ID"),
+      api_key: api_key
+    )
+  rescue StandardError => e
+    UI.error("match could not provide a Developer ID certificate.")
+    UI.error("If it says none was found, nobody has minted it yet. On a Mac,")
+    UI.error("signed in as the Apple account HOLDER, run ONCE:")
+    UI.error("  bundle exec fastlane developer_id_certificate_bootstrap")
+    raise e
+  end
+end
+
+# ONE-TIME BOOTSTRAP, RUN BY A HUMAN ON A MAC. Never in CI - it cannot work
+# there, see the readonly note above.
+#
+# Authenticates with an APPLE ID rather than an API key, because only the
+# Account Holder may create a Developer ID certificate and only Apple ID
+# login carries that identity. Expect a 2FA prompt in the terminal, and a
+# keychain prompt when the new certificate is imported - that one must be
+# ALLOWED or the run ends with the certificate created at Apple but not
+# stored anywhere, which wastes one of five slots.
+#
+# Needs APPLE_ID (the Account Holder's), AITY_TEAM_ID, MATCH_PASSWORD, and
+# push access to the certificates repo, which a workstation has over SSH.
+# Afterwards the certificate lives in the match store and CI takes over.
+#
+# Developer ID certificates are capped at 5 per account and revoking one
+# invalidates everything already signed with it. Run this once and let the
+# store be the source of truth; do not re-run it to "refresh" anything.
+lane :developer_id_certificate_bootstrap do
+  %w[APPLE_ID AITY_TEAM_ID MATCH_PASSWORD].each do |var|
+    UI.user_error!("#{var} is not set - see meta/docs/runbooks/publisher-accounts.md") if ENV[var].to_s.empty?
+  end
+
+  UI.important("Creating a Developer ID Application certificate in the Apple account")
+  UI.important("and pushing it to the match store. Account Holder only; 2FA will prompt.")
+
   match(
     type: "developer_id",
     app_identifier: [],
     skip_provisioning_profiles: true,
     readonly: false,
     team_id: ENV.fetch("AITY_TEAM_ID"),
-    api_key: api_key
+    username: ENV.fetch("APPLE_ID")
   )
 end

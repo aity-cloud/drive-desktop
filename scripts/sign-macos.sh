@@ -34,8 +34,38 @@ if [ "$PREFLIGHT" -eq 0 ]; then
   [ -d "$DIST" ] || { echo "sign-macos: no such directory: $DIST"; exit 1; }
 fi
 
+# Is a Developer ID Application identity ALREADY in the keychain? If so this
+# script needs no match store, no fastlane and no gems at all - it just signs.
+# That is the normal case on a Mac whose owner is the Apple account holder,
+# and it is the ONLY case that works today: CI cannot mint the certificate
+# (Apple: "This operation can only be performed by the Account Holder"), so
+# whatever is already in the keychain is what we sign with.
+#
+# MACOS_SIGN_IDENTITY overrides the search when several identities exist and
+# the first one found is not the one you mean.
+find_developer_id() {
+  security find-identity -v -p codesigning 2>/dev/null \
+    | awk -F'"' '/Developer ID Application/ {print $2; exit}'
+}
+
+IDENTITY="${MACOS_SIGN_IDENTITY:-}"
+[ -n "$IDENTITY" ] || IDENTITY="$(find_developer_id)"
+
+if [ -n "$IDENTITY" ]; then
+  echo "sign-macos: Developer ID identity already in the keychain: $IDENTITY"
+  NEED_MATCH=0
+else
+  echo "sign-macos: no Developer ID Application identity in the keychain - will try the match store"
+  NEED_MATCH=1
+fi
+
+# Notarisation always needs the API key. The match variables are needed ONLY
+# when we have to fetch a certificate we do not already hold.
+required="ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8"
+[ "$NEED_MATCH" -eq 1 ] && required="$required AITY_TEAM_ID MATCH_PASSWORD MATCH_GIT_PRIVATE_KEY"
+
 missing=""
-for v in ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8 AITY_TEAM_ID MATCH_PASSWORD MATCH_GIT_PRIVATE_KEY; do
+for v in $required; do
   [ -n "${!v:-}" ] || missing="$missing $v"
 done
 if [ -n "$missing" ]; then
@@ -59,6 +89,29 @@ fi
 # config, gem env, every fastlane on PATH) and then self-heal, because a
 # signing job that dies on gem plumbing after a 25 minute build is the worst
 # possible place to stop.
+# The runner's gem env is split: gems install to
+#   USER INSTALLATION DIRECTORY: /Users/raul/.gem/ruby/4.0.0
+# while executables are expected in
+#   EXECUTABLE DIRECTORY: /opt/homebrew/lib/ruby/gems/4.0.0/bin
+# so `bundle install` reports success and `bundle exec fastlane` then cannot
+# find the binary. Putting the user gem bin dir on PATH up front means the
+# fallback below installs fastlane at most ONCE per machine instead of once
+# per invocation - preflight and the real run were each paying ~50s for it.
+if command -v ruby >/dev/null 2>&1; then
+  USER_GEM_BIN="$(ruby -e 'require "rubygems"; print Gem.user_dir' 2>/dev/null)/bin"
+  case ":$PATH:" in
+    *":$USER_GEM_BIN:"*) ;;
+    *) [ -d "$USER_GEM_BIN" ] && PATH="$USER_GEM_BIN:$PATH" && export PATH ;;
+  esac
+fi
+
+if [ "$NEED_MATCH" -eq 0 ]; then
+  if [ "$PREFLIGHT" -eq 1 ]; then
+    echo "sign-macos: preflight OK - signing identity present, notarisation credentials present."
+    exit 0
+  fi
+else
+
 echo "sign-macos: resolving fastlane"
 FASTLANE=""
 if bundle install; then
@@ -96,9 +149,17 @@ fi
 echo "sign-macos: fetching the Developer ID certificate from the match store"
 $FASTLANE developer_id_certificate
 
-IDENTITY=$(security find-identity -v -p codesigning | awk -F'"' '/Developer ID Application/ {print $2; exit}')
-[ -n "$IDENTITY" ] || { echo "sign-macos: no Developer ID Application identity in the keychain"; exit 1; }
+IDENTITY="$(find_developer_id)"
+[ -n "$IDENTITY" ] || { echo "sign-macos: still no Developer ID Application identity after match"; exit 1; }
+
+fi   # NEED_MATCH
+
 echo "sign-macos: signing with: $IDENTITY"
+# codesign needs the PRIVATE KEY, and macOS will ask permission the first time
+# a process that is not Xcode uses it. A LaunchAgent runner cannot answer that
+# prompt if nobody is looking, and a Deny fails the job here rather than
+# anywhere informative - allow it once, for this keychain, and it stops
+# asking.
 
 shopt -s nullglob
 apps=("$DIST"/*.app)
