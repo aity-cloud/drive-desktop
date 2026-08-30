@@ -340,3 +340,25 @@ background and icon positions. Switching means replacing that packager's
 `createPackage` wholesale, which is more than a quirk workaround deserves
 today. The script already recognises the dmgbuild variant and no-ops on it,
 so a craft-core bump that adopts it needs no further action here.
+
+## The DMG shipped upstream's trademark in its FILENAME (2026-08-30)
+
+The first successful macOS package produced:
+
+    dist/macos-production/owncloud-client-HEAD-14-macos-clang-arm64.dmg
+
+The `.app` inside was branded correctly all along - Craft names the PACKAGE
+after the blueprint, and the macOS job moved it into `dist/` untouched while
+the AppImage job had been renaming its output via `scripts/collect-binaries.sh`
+since day one. meta/AGENTS.md allows no "owncloud" in anything we hand out,
+and a filename is the first thing a customer sees.
+
+`collect-binaries.sh` now handles both platforms and the macOS job uses it:
+
+    aity-drive-7.1.0.<build>-macos-arm64.dmg (+ .sha256)
+
+Two macOS specifics in there: the destination is overridable with
+`COLLECT_DEST` because the macOS job writes to `dist/macos-<env>` rather than
+`dist/<env>`, and checksums fall back to `shasum -a 256` because macOS has no
+`sha256sum`. Both paths are exercised in the repo's history against a fake
+Darwin PATH with no `sha256sum` present.

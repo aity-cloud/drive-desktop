@@ -21,8 +21,17 @@ lane :developer_id_certificate do
 
   # A Developer ID app needs a provisioning profile only for profile-backed
   # entitlements, which this client does not use - certificate only.
+  #
+  # app_identifier is still REQUIRED even with skip_provisioning_profiles.
+  # match validates its options before it looks at what work there is to do,
+  # so leaving it out fails with a bare "No value found for 'app_identifier'"
+  # after the whole client has already built (hit 2026-08-30). The ids are
+  # only used for profile naming, which is skipped - they just have to be
+  # the real ones, and they are the two APPLICATION_REV_DOMAINs in
+  # overlay/{production,staging}/OEM.cmake.
   match(
     type: "developer_id",
+    app_identifier: %w[tech.aity.drive.desktop tech.aity.drive.desktop.staging],
     skip_provisioning_profiles: true,
     readonly: false,
     team_id: ENV.fetch("AITY_TEAM_ID"),

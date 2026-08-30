@@ -244,16 +244,11 @@ build:macos:
     - rm -rf "$HOME/craft/binaries" && mkdir -p "$HOME/craft/binaries"
     - scripts/craft.sh -c --no-cache owncloud/owncloud-client
     - scripts/craft.sh -c --no-cache --package owncloud/owncloud-client
-    - |
-      mkdir -p "dist/macos-$MAC_ENV"
-      set -- "$HOME"/craft/binaries/*
-      if [ "$#" -eq 0 ] || [ ! -e "$1" ]; then
-        echo "craft --package produced nothing in $HOME/craft/binaries"
-        exit 1
-      fi
-      echo "collected $# artifact(s):"
-      for f in "$@"; do echo "  $(basename "$f")"; done
-      mv "$@" "dist/macos-$MAC_ENV/"
+    # Same collector as the AppImage job: it renames Craft's blueprint-named
+    # output (owncloud-client-HEAD-<n>-macos-clang-arm64.dmg) to the shape we
+    # actually ship. The .app inside was always branded; the wrapper was not,
+    # and meta/AGENTS.md allows no "owncloud" in anything we hand out.
+    - COLLECT_DEST="dist/macos-$MAC_ENV" bash scripts/collect-binaries.sh "$MAC_ENV"
     # Developer ID signing + notarisation, when the credentials are present.
     # Skipped with a loud message otherwise, so an unsigned build is still a
     # usable artifact and never a silent one.
