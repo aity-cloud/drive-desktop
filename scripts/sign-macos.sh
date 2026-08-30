@@ -68,6 +68,23 @@ else
   security list-keychains -d user 2>&1 | sed 's/^/    /' || true
   echo "sign-macos: identities in the login keychain specifically:"
   security find-identity -v -p codesigning "$HOME/Library/Keychains/login.keychain-db" 2>&1 | sed 's/^/    /' || true
+  # Name the specific wrong-type mistake, because it is the likely one and
+  # the message "no identity found" sends people looking for a keychain
+  # problem they do not have. Apple Development signs for your own devices;
+  # Apple Distribution signs for the App Store. NEITHER can be notarised and
+  # neither satisfies Gatekeeper for a download - only Developer ID
+  # Application can. Measured 2026-08-30: this Mac had exactly one identity,
+  # "Apple Distribution: Raul Bag", which is the iOS Factory certificate.
+  if security find-identity -v -p codesigning 2>/dev/null | grep -qE 'Apple (Development|Distribution):'; then
+    echo "sign-macos: NOTE - there IS an Apple Development/Distribution identity here."
+    echo "sign-macos: that is not a substitute. Those sign for your own devices and"
+    echo "sign-macos: for the App Store; the notary service rejects them and Gatekeeper"
+    echo "sign-macos: refuses a download signed with one. Only Developer ID Application"
+    echo "sign-macos: works for this client, and only the Apple account HOLDER can create it:"
+    echo "sign-macos:   Xcode > Settings > Accounts > Manage Certificates > + > Developer ID Application"
+    echo "sign-macos: or, to put it in the shared store at the same time:"
+    echo "sign-macos:   bundle exec fastlane developer_id_certificate_bootstrap"
+  fi
   echo "sign-macos: will try the match store instead"
   NEED_MATCH=1
 fi

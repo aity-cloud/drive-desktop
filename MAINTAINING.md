@@ -444,3 +444,36 @@ which is why `bundle install` reports success and `bundle exec fastlane` then
 cannot find the binary. The script puts the user gem bin dir on PATH before
 trying anything, so the fallback installs fastlane at most once per machine
 rather than once per invocation. On the keychain path it never runs at all.
+
+### An Apple Distribution certificate is NOT a substitute (measured 2026-08-30)
+
+The runner reported:
+
+    identities this process can see:
+      1) 5CEA2980... "Apple Distribution: Raul Bag (Z3C9R3AHZ8)"
+         1 valid identities found
+    keychains in its search list:
+      "/Users/raul/Library/Keychains/login.keychain-db"
+      "/Users/raul/Library/Keychains/fastlane_tmp_keychain-db"
+
+So the runner's keychain visibility was never the problem - the login
+keychain is in its search list and it can read it. The machine simply holds
+the wrong TYPE of certificate:
+
+- **Apple Development** signs builds for your own devices.
+- **Apple Distribution** signs for the App Store. This is what the iOS
+  Factory uses, and it is the one that was there.
+- **Developer ID Application** is the only one that can be NOTARISED and the
+  only one Gatekeeper accepts for a download outside the App Store.
+
+Signing the DMG with the Distribution certificate would be worse than
+shipping it unsigned: it would look signed and fail to open on every Mac but
+this one. The script deliberately refuses and says why, rather than picking
+whatever identity it finds.
+
+Creating the right one is Account-Holder-only, so it is a human step either
+way. Xcode (Settings > Accounts > Manage Certificates > + > Developer ID
+Application) puts it in the login keychain, where the runner will find it
+immediately. `developer_id_certificate_bootstrap` does the same AND pushes it
+to the match store, which is what a second machine or a different runner
+would need later.
