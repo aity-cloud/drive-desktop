@@ -362,3 +362,33 @@ Two macOS specifics in there: the destination is overridable with
 `dist/<env>`, and checksums fall back to `shasum -a 256` because macOS has no
 `sha256sum`. Both paths are exercised in the repo's history against a fake
 Darwin PATH with no `sha256sum` present.
+
+## Signing preflight, and why bundler could not find fastlane (2026-08-30)
+
+`bundle install --quiet && bundle exec fastlane` failed with:
+
+    bundler: command not found: fastlane
+    Install missing gem executables with `bundle install`
+
+after the client had built and the DMG had been packaged - i.e. at the most
+expensive possible moment. The runner carries Homebrew ruby 4.0.6 alongside
+user gems in `~/.gem/ruby/4.0.0`, and every invocation logs two rdoc versions
+initialising over each other, so that environment is inconsistent before we
+ask it for anything.
+
+Two changes, and the second matters more than the first:
+
+- `--quiet` is gone, because it hid what bundler actually did. If bundler
+  cannot produce a runnable fastlane the script now PRINTS the ground truth
+  (`bundle list`, `bundle config`, `gem env`, every `fastlane` on PATH) and
+  then self-heals: fastlane on PATH if there is one, otherwise a
+  `--user-install`. It only gives up after that, and says so.
+- **`scripts/sign-macos.sh --preflight` runs FIRST in the job**, before
+  `materialize.sh`. It checks the credential variables and resolves fastlane,
+  then stops - none of which needs build output. A missing variable or broken
+  gem now fails in seconds instead of after the build.
+
+The general rule the third macOS iteration in a row taught: when a step near
+the END of a long job depends only on things known at the START, check it at
+the start. The desktop factory's build is ~6 minutes; the iOS one is far
+worse.

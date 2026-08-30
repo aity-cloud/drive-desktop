@@ -16,10 +16,23 @@
 # build stays a useful artifact, it just cannot be handed to anyone.
 #
 # Usage: scripts/sign-macos.sh <dist-dir>
+#        scripts/sign-macos.sh --preflight
+#
+# --preflight does the credential check and resolves fastlane, then stops.
+# The job runs it BEFORE the build: signing is the last step of a job whose
+# build takes many minutes, so a missing variable or a gem that will not load
+# used to be discovered at the most expensive possible moment. Everything it
+# checks is cheap and none of it depends on build output.
 set -euo pipefail
 
-DIST="${1:?usage: sign-macos.sh <dist-dir>}"
-[ -d "$DIST" ] || { echo "sign-macos: no such directory: $DIST"; exit 1; }
+PREFLIGHT=0
+if [ "${1:-}" = "--preflight" ]; then PREFLIGHT=1; shift; fi
+
+DIST="${1:-}"
+if [ "$PREFLIGHT" -eq 0 ]; then
+  : "${DIST:?usage: sign-macos.sh <dist-dir> | sign-macos.sh --preflight}"
+  [ -d "$DIST" ] || { echo "sign-macos: no such directory: $DIST"; exit 1; }
+fi
 
 missing=""
 for v in ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8 AITY_TEAM_ID MATCH_PASSWORD MATCH_GIT_PRIVATE_KEY; do
@@ -27,13 +40,61 @@ for v in ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8 AITY_TEAM_ID MATCH_PASSWORD MATCH_G
 done
 if [ -n "$missing" ]; then
   echo "sign-macos: SKIPPING signing and notarisation - missing:$missing"
-  echo "sign-macos: the artifacts in $DIST are UNSIGNED; macOS will refuse to open them on another machine."
+  if [ "$PREFLIGHT" -eq 1 ]; then
+    echo "sign-macos: preflight - the build will produce UNSIGNED artifacts, which is fine for a test build."
+  else
+    echo "sign-macos: the artifacts in $DIST are UNSIGNED; macOS will refuse to open them on another machine."
+  fi
+  exit 0
+fi
+
+# RESOLVING FASTLANE. `bundle install --quiet && bundle exec fastlane` looked
+# obvious and failed with "bundler: command not found: fastlane" (2026-08-30)
+# on a runner carrying Homebrew ruby 4.0.6 next to user gems in
+# ~/.gem/ruby/4.0.0 - two rdoc versions load on every invocation, so the
+# environment is already inconsistent before we ask it for anything.
+#
+# --quiet is gone: it hid whatever bundler actually did. If bundler cannot
+# produce a working fastlane we print the ground truth (bundle list, bundle
+# config, gem env, every fastlane on PATH) and then self-heal, because a
+# signing job that dies on gem plumbing after a 25 minute build is the worst
+# possible place to stop.
+echo "sign-macos: resolving fastlane"
+FASTLANE=""
+if bundle install; then
+  if bundle exec fastlane --version >/dev/null 2>&1; then
+    FASTLANE="bundle exec fastlane"
+    echo "sign-macos: using bundler"
+  fi
+fi
+
+if [ -z "$FASTLANE" ]; then
+  echo "sign-macos: bundler cannot run fastlane here. Ground truth:"
+  { bundle list; bundle config; gem env; type -a fastlane; } 2>&1 | sed 's/^/    /' || true
+
+  if command -v fastlane >/dev/null 2>&1 && fastlane --version >/dev/null 2>&1; then
+    echo "sign-macos: falling back to the fastlane already on PATH"
+    FASTLANE="fastlane"
+  else
+    echo "sign-macos: installing fastlane into the user gem dir"
+    gem install --no-document --user-install fastlane
+    PATH="$(ruby -e 'require "rubygems"; print Gem.user_dir')/bin:$PATH"
+    export PATH
+    fastlane --version >/dev/null 2>&1 || {
+      echo "sign-macos: fastlane still not runnable after a user-install - stopping."
+      exit 1
+    }
+    FASTLANE="fastlane"
+  fi
+fi
+
+if [ "$PREFLIGHT" -eq 1 ]; then
+  echo "sign-macos: preflight OK - credentials present and fastlane runnable."
   exit 0
 fi
 
 echo "sign-macos: fetching the Developer ID certificate from the match store"
-bundle install --quiet
-bundle exec fastlane developer_id_certificate
+$FASTLANE developer_id_certificate
 
 IDENTITY=$(security find-identity -v -p codesigning | awk -F'"' '/Developer ID Application/ {print $2; exit}')
 [ -n "$IDENTITY" ] || { echo "sign-macos: no Developer ID Application identity in the keychain"; exit 1; }

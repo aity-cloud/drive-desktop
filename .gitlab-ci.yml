@@ -197,6 +197,11 @@ build:macos:
     CRAFT_TARGET: macos-clang-arm64
     MAC_ENV: production
   script:
+    # Signing is the LAST step of a job whose build takes many minutes, so a
+    # missing credential or a gem that will not load used to surface at the
+    # most expensive possible moment (it did, twice). Preflight checks all of
+    # that in seconds, before anything is built.
+    - bash scripts/sign-macos.sh --preflight
     - scripts/materialize.sh "$MAC_ENV"
     # The macos runner is a SHELL executor on Raul's laptop: $HOME survives
     # between jobs, so nothing here may assume a clean machine. A plain clone
