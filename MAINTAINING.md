@@ -208,3 +208,55 @@ whole step loudly rather than producing a quietly unsigned artifact.
 Developer ID is gated by ROLE (Account Holder), not by membership type -
 an individual Apple account signs and notarises fine.
 
+## macOS: `ld: framework 'AGL' not found` (first build:macos run, 2026-08-30)
+
+The first ever `build:macos` configured cleanly, compiled 69 of 425 objects
+and died on the first link:
+
+    ld: framework 'AGL' not found
+
+AGL is Apple's legacy OpenGL wrapper, deprecated since 10.11 and gone from
+the modern SDK. Nothing in this client calls it. It arrives through Qt:
+Qt ships its own `FindWrapOpenGL.cmake`, that module runs
+`find_library(FWAGL AGL)` and feeds the result into `WrapOpenGL::WrapOpenGL`,
+which `Qt6::Gui` links - so every target linking Qt6::Gui gets
+`-framework AGL`, and the first one to link dies. The link line shows it in
+Qt's own order, `QtGui -framework AGL -framework AppKit -framework OpenGL`,
+which is what identifies the source.
+
+**The confusing part, worth internalising: the find SUCCEEDS and the link
+FAILS.** CMake's `find_library` also searches the RUNNING SYSTEM's
+`/System/Library/Frameworks`, while `ld` is pinned to the SDK by `-isysroot`.
+A framework present on the host but absent from the SDK passes configure and
+fails at link. Do not read "configure found it" as "it is there".
+
+`scripts/mac-sdk-quirks.sh` (run by the job after `--install-deps`) makes the
+find come back empty inside the Craft prefix, which is disposable and
+rebuilt from cache - no source patch, no blueprint fork. It asks the LINKER
+whether AGL works rather than hardcoding an SDK version, so it becomes a
+no-op by itself the day a Qt bump or an SDK makes it unnecessary, and it
+exits non-zero if AGL is unlinkable but nothing in the prefix asks for it -
+i.e. it refuses to claim a fix it did not make.
+
+### Two icon messages in the same log that are NOT defects
+
+Checked, because they read like branding leaks and are not:
+
+    -- Icon not found: .../theme/colored/aitydrive-icon.png
+    -- Icon not found: .../theme/colored/wizard_logo.png
+
+`generate_theme` probes the legacy "ownbrander" layout (`theme/colored/`)
+first and the full-theme layout (`theme/universal/`) second. We ship the
+full theme, so the first probe misses and the second resolves - all four of
+`aitydrive-icon.svg`, `wizard_logo.svg`, `wizard_logo_dark.svg` and
+`wizard_footer_logo.svg` are in `overlay/common/theme/universal/` and none
+of them printed a miss. There is no fallback to ownCloud artwork here.
+
+    -- not found sidebar_icons_at_1024px .../1024-aitydrive-sidebar.png
+    -- not found sidebar_icons_at_512px  .../512-aitydrive-sidebar.png
+
+Both files exist and are genuinely 1024x1024 and 512x512 (checked). The
+message is not in this tree at all - it comes from outside the materialised
+source, so it is the Craft blueprint or ECM doing the `.icns` assembly.
+UNVERIFIED and macOS-only: confirm the sidebar icon on the built `.app`
+once the link succeeds, rather than theorising about it now.

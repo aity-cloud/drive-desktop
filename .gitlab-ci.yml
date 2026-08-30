@@ -198,6 +198,11 @@ build:macos:
     - scripts/craft.sh -c --set srcDir="$AITY_MATERIALIZED" owncloud/owncloud-client
     - scripts/craft.sh -c --set buildNumber=$CI_PIPELINE_IID owncloud/owncloud-client
     - scripts/craft.sh -c --install-deps owncloud/owncloud-client
+    # Craft's prebuilt Qt asks the linker for frameworks this SDK no longer
+    # has (AGL, first hit 2026-08-30). Runs AFTER install-deps because it
+    # edits Qt's cmake modules in the Craft prefix, and is a no-op the moment
+    # a Qt bump or an SDK makes it unnecessary. Full story in the script.
+    - bash scripts/mac-sdk-quirks.sh
     - |
       if [ "$MAC_ENV" = staging ]; then
         export APPLICATION_EXECUTABLE=aity-drive-staging APPLICATION_SHORTNAME=aitydrive-staging
