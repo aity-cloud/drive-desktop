@@ -183,6 +183,13 @@ build:macos:
   tags: [macos]
   needs: []
   timeout: 3h
+  # NOT interruptible, unlike the `default` block. This job is manual, runs
+  # up to 3h, and runs on Raul's laptop - a later push to main auto-cancelling
+  # it throws away real wall-clock on a machine someone is also using. It
+  # already happened once: a docs-sized push cancelled a Mac build mid-flight.
+  # Everything else in this pipeline is cheap and disposable, so the default
+  # stays as it is.
+  interruptible: false
   rules:
     - when: manual
       allow_failure: true

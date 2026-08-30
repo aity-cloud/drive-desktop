@@ -62,7 +62,15 @@ touched = already = 0
 # pinned to find_library: Qt uses its own wrappers here, and the first
 # version of this script matched only find_library(), patched nothing, and
 # reported success-shaped output while the build stayed broken.
-LOOKUP = re.compile(r'^([ \t]*)(\w*find\w*)\(\s*(\w+)\s+AGL\s*\)[ \t]*$', re.M | re.I)
+# The real spelling in Qt 6.8.3, seen on the runner 2026-08-30:
+#     find_library(WrapOpenGL_AGL NAMES AGL)
+# The optional NAMES keyword is why version two of this script still missed
+# it. Kept deliberately loose - any lookup-ish call, any variable name, with
+# or without NAMES - because the point is to survive Qt changing the
+# spelling again, not to match one release.
+LOOKUP = re.compile(
+    r'^([ \t]*)(\w*find\w*)\(\s*(\w+)\s+(?:NAMES\s+)?AGL\s*\)[ \t]*$',
+    re.M | re.I)
 
 # Runs after Qt's own module body, so it does not care HOW AGL got into the
 # interface - only that it is gone before anything links against it.
@@ -100,7 +108,7 @@ for f in sorted(root.rglob("*.cmake")):
             print(f"      {i}: {line.strip()[:110]}")
 
     new, n = LOOKUP.subn(
-        lambda m: (f'{m.group(1)}# {MARK} - was: {m.group(2)}({m.group(3)} AGL)\n'
+        lambda m: (f'{m.group(1)}# {MARK} - was: {m.group(0).strip()}\n'
                    f'{m.group(1)}set({m.group(3)} "")'),
         s)
     if n:
