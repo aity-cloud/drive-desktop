@@ -217,26 +217,45 @@ and died on the first link:
 
 AGL is Apple's legacy OpenGL wrapper, deprecated since 10.11 and gone from
 the modern SDK. Nothing in this client calls it. It arrives through Qt:
-Qt ships its own `FindWrapOpenGL.cmake`, that module runs
-`find_library(FWAGL AGL)` and feeds the result into `WrapOpenGL::WrapOpenGL`,
-which `Qt6::Gui` links - so every target linking Qt6::Gui gets
-`-framework AGL`, and the first one to link dies. The link line shows it in
-Qt's own order, `QtGui -framework AGL -framework AppKit -framework OpenGL`,
-which is what identifies the source.
+Qt ships its own `FindWrapOpenGL.cmake`, that module looks AGL up and feeds
+the result into `WrapOpenGL::WrapOpenGL`, which `Qt6::Gui` links - so every
+target linking Qt6::Gui gets `-framework AGL`, and the first to link dies.
+The link line names it in Qt's own order, `QtGui -framework AGL -framework
+AppKit -framework OpenGL`, which is what identifies the source.
 
-**The confusing part, worth internalising: the find SUCCEEDS and the link
-FAILS.** CMake's `find_library` also searches the RUNNING SYSTEM's
-`/System/Library/Frameworks`, while `ld` is pinned to the SDK by `-isysroot`.
-A framework present on the host but absent from the SDK passes configure and
-fails at link. Do not read "configure found it" as "it is there".
+**The find SUCCEEDS and the link FAILS**, measured on the runner:
 
-`scripts/mac-sdk-quirks.sh` (run by the job after `--install-deps`) makes the
-find come back empty inside the Craft prefix, which is disposable and
-rebuilt from cache - no source patch, no blueprint fork. It asks the LINKER
-whether AGL works rather than hardcoding an SDK version, so it becomes a
-no-op by itself the day a Qt bump or an SDK makes it unnecessary, and it
-exits non-zero if AGL is unlinkable but nothing in the prefix asks for it -
-i.e. it refuses to claim a fix it did not make.
+    absent : <Xcode>/…/MacOSX.sdk/System/Library/Frameworks/AGL.framework
+    present: /System/Library/Frameworks/AGL.framework
+
+CMake's lookup also searches the RUNNING SYSTEM; `ld` is pinned to the SDK
+by `-isysroot`. Never read "configure found it" as "it is there".
+
+`scripts/mac-sdk-quirks.sh` (run by the job after `--install-deps`) empties
+the lookup inside the Craft prefix, which is disposable and rebuilt from
+cache - no source patch, no blueprint fork. It asks the LINKER whether AGL
+works rather than hardcoding an SDK version, so it becomes a no-op by itself
+when a Qt bump or an SDK fixes this, and it is idempotent.
+
+**Two mistakes in the first version of that script, both worth not
+repeating:**
+
+- It matched `find_library(... AGL)` only. Qt does not use `find_library`
+  here - it uses its own Apple-framework wrapper - so the script patched
+  NOTHING while printing output that read like success (`patched 0
+  find_library(AGL) call(s)`). It now matches any lookup of the shape
+  `<something-find-something>(<VAR> AGL)`, it PRINTS every AGL-referencing
+  line it finds before touching anything, and it additionally appends a
+  scrub of `WrapOpenGL::WrapOpenGL`'s link interface, which does not care
+  how AGL got in there.
+- Its per-file exit status leaked through `set -e` and killed the job with
+  a bare `exit status 3`. The patching is now one python pass that returns
+  only 0 or 1.
+
+The lesson under both: a CI-only script still has to be exercised before it
+is shipped. The fixture in this repo's history is two synthetic `.cmake`
+files under a fake prefix; running the patcher over them takes seconds on
+Linux and would have caught both.
 
 ### Two icon messages in the same log that are NOT defects
 
