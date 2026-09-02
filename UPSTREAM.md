@@ -8,13 +8,17 @@ The Pin is the `UPSTREAM_TAG` variable in `.gitlab-ci.yml`:
 ```yaml
 variables:
   # renovate: datasource=github-tags depName=owncloud/client
-  UPSTREAM_TAG: "v7.1.0"
+  UPSTREAM_TAG: "v7.1.1"
 ```
 
-`v7.1.0` was the newest stable 7.1.x at pin time (2026-08-25; `v7.1.1-rc.1`
-existed but release candidates are never Pins). The Renovate MR that watch
-produces is a SIGNAL, not a mergeable change - the Bump procedure is in
-`../meta/docs/maintenance.md`.
+Bumped v7.1.0 -> v7.1.1 on 2026-09-02: a single upstream change,
+`src/libsync/config/appconfig.cpp` (OIDC `prompt` was read from the ports
+key, and `.ini` port lists were mis-parsed). It touches none of the overlay
+inputs or `patches/0001` targets - verified with `git diff v7.1.0 v7.1.1`
+(8 files: the fix + its test, VERSION.cmake, CHANGELOG, and GitHub runner
+labels in `.github/workflows/*` that our CI does not use). The Renovate MR
+that watch produces is a SIGNAL, not a mergeable change - the Bump procedure
+is in `../meta/docs/maintenance.md`.
 
 ## The branding mechanism at this Pin
 

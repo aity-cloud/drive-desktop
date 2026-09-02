@@ -10,7 +10,7 @@ stages: [materialize, build, smoke, publish-staging, promote, mirror]
 
 variables:
   # renovate: datasource=github-tags depName=owncloud/client
-  UPSTREAM_TAG: "v7.1.0"
+  UPSTREAM_TAG: "v7.1.1"
   # registry.aity.tech/catalog is a CURATED mirror, not a Docker Hub proxy:
   # catalog/library/alpine exists, catalog/library/ubuntu and
   # catalog/owncloudci/* return "not found" (pipelines #2788232840,
