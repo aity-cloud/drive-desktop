@@ -133,6 +133,35 @@ default radio cannot be clicked to for a screenshot - read the built default
 in `build/materialized/<env>/src/gui/newaccountwizard/advancedsettingspagecontroller.cpp`
 instead.
 
+## Linux .deb/.rpm (added 2026-09-02)
+
+`package:linux` turns each built AppImage into a `.deb` and a `.rpm`
+(`scripts/package-linux.sh`, fpm in an ubuntu image). The package is the
+AppImage's own relocatable tree dropped under `/opt/<shortname>` plus the
+desktop-menu integration the bare AppImage lacks: a launcher on `PATH`, the
+`.desktop`, and the hicolor icons. Both Environment builds coexist
+(`aitydrive` vs `aitydrive-staging`: distinct package name, `/opt` dir,
+launcher and `.desktop`). No distro dependencies are declared - the bundle
+carries Qt and a desktop already has the GL/xcb/fontconfig runtime it
+dlopens, the same assumption the AppImage makes. The packages land in
+`dist/<env>` next to the AppImage, so `publish:staging-prerelease` and
+`promote` upload them with everything else (both jobs now `need`
+`package:linux`).
+
+Two traps, both proven by installing the built `.deb` in a container:
+
+- **`/usr/bin/<exe>` must be a launcher SCRIPT, not a symlink to AppRun.**
+  AppRun resolves its own directory with `this_dir="$(readlink -f "$(dirname
+  "$0")")"` - it does NOT `readlink` `$0` itself first. Invoked through a
+  symlink at `/usr/bin/<exe>`, `$0` is the symlink, `dirname` gives
+  `/usr/bin`, and AppRun then sources `/usr/bin/apprun-hooks/*.sh` which do
+  not exist and dies. A `#!/bin/sh` launcher that `exec`s the absolute
+  `/opt/<shortname>/AppRun` gives it the right `$0`.
+- **fpm needs `rpmbuild` for the rpm and `dpkg`/`dpkg-deb` for the deb**, plus
+  `ruby`/`ruby-dev`/`build-essential` to install the fpm gem. The job's apt
+  line carries `ruby ruby-dev build-essential rpm libarchive-tools`; drop any
+  and one of the two formats fails at the fpm call, not at install.
+
 ## Traps
 
 - **`registry.aity.tech/catalog` is a curated mirror, not a Docker Hub
