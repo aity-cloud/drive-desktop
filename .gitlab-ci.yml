@@ -153,7 +153,18 @@ build:windows:
     - '& "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -format json | Out-Host'
     - if (-not (Get-Command python -ErrorAction SilentlyContinue)) { choco install -y python312 --no-progress | Out-Host; refreshenv }
     - python --version
-    - '& "$env:ProgramFiles\Git\bin\bash.exe" scripts/materialize.sh $env:WIN_ENV'
+    # git-bash runs the repo's sh scripts. Its location is NOT guessable:
+    # "$env:ProgramFiles\Git\bin\bash.exe" does not exist on the SaaS runner
+    # (first run, 2026-09-02). git itself is always present (it cloned this
+    # repo), so ask IT where it lives and print the ground truth. Do not use
+    # `Get-Command bash` - that can resolve to WSL's System32\bash.exe.
+    - |
+      $gitroot = Split-Path (Split-Path (Split-Path ((& git --exec-path) -replace '/','\')))
+      $env:AITY_BASH = @("$gitroot\bin\bash.exe", "$gitroot\usr\bin\bash.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+      Write-Host "git exec-path: $(& git --exec-path)"
+      Write-Host "git-bash resolved to: $env:AITY_BASH"
+      if (-not $env:AITY_BASH) { Get-ChildItem $gitroot | Out-Host; throw "no bash.exe under $gitroot" }
+    - '& $env:AITY_BASH scripts/materialize.sh $env:WIN_ENV'
     - git clone --depth=1 https://invent.kde.org/kde/craftmaster.git "$env:USERPROFILE/craft/CraftMaster/CraftMaster"
     - $env:AITY_MATERIALIZED = "$env:CI_PROJECT_DIR/build/materialized/$env:WIN_ENV" -replace '\\','/'
     - scripts/craft.ps1 --setup
@@ -169,7 +180,7 @@ build:windows:
     # names the installer after the blueprint (owncloud-client-HEAD-<n>-*),
     # and meta/AGENTS.md allows no "owncloud" in anything we hand out.
     - $env:COLLECT_DEST = "dist/windows-$env:WIN_ENV"
-    - '& "$env:ProgramFiles\Git\bin\bash.exe" scripts/collect-binaries.sh $env:WIN_ENV'
+    - '& $env:AITY_BASH scripts/collect-binaries.sh $env:WIN_ENV'
     - Get-ChildItem "dist/windows-$env:WIN_ENV"
   artifacts:
     when: always
