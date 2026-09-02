@@ -204,6 +204,19 @@ build:windows:
     - scripts/craft.ps1 -c --install-deps owncloud/owncloud-client
     - if ($env:WIN_ENV -eq "staging") { $env:APPLICATION_EXECUTABLE = "aity-drive-staging"; $env:APPLICATION_SHORTNAME = "aitydrive-staging" } else { $env:APPLICATION_EXECUTABLE = "aity-drive"; $env:APPLICATION_SHORTNAME = "aitydrive" }
     - scripts/craft.ps1 -c --no-cache owncloud/owncloud-client
+    # The blueprint hardcodes the NSIS icon to <buildDir>/src/gui/owncloud.ico
+    # (createPackage in craft-blueprints-owncloud), but a branded build writes
+    # $APPLICATION_ICON_NAME.ico, so makensis aborts (job 16252051465; the
+    # MAINTAINING.md trap, fatal on Windows rather than cosmetic). Copy the
+    # branded icon to the name the blueprint expects - the file name is
+    # internal to the build dir, and the installer gets the branded artwork.
+    # The real fix is an upstream blueprint PR (env-var lookup like appname).
+    - |
+      $bd = (scripts/craft.ps1 -c --get buildDir -q owncloud-client) | Select-Object -Last 1
+      $ico = "$bd\src\gui\$env:APPLICATION_SHORTNAME.ico"
+      if (-not (Test-Path $ico)) { Get-ChildItem "$bd\src\gui" -Filter *.ico | Out-Host; throw "branded icon $ico not found" }
+      Copy-Item $ico "$bd\src\gui\owncloud.ico"
+      Write-Host "installer icon: $ico -> owncloud.ico"
     - scripts/craft.ps1 -c --no-cache --package owncloud/owncloud-client
     # Same collector as the AppImage and macOS jobs, via git-bash: Craft
     # names the installer after the blueprint (owncloud-client-HEAD-<n>-*),
