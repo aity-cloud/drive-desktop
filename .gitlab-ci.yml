@@ -567,7 +567,7 @@ publish:staging-prerelease:
 # is enabled by Raul in the mirror's repo settings, never from here.
 promote:
   stage: promote
-  image: docker.io/library/ubuntu:24.04
+  image: docker.io/library/ubuntu:26.04
   # build:appimage + package:linux carry dist/production/* (AppImage, .deb,
   # .rpm) into this job; publish:staging-prerelease gates the order.
   needs:
