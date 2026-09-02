@@ -599,6 +599,15 @@ Still open after the green run:
   a real Windows machine - install, login against staging, sync, uninstall
   are all unproven. Needs a human with a Windows box (or the Harvester
   Windows VM) once a staging-Environment installer exists.
-- The staging Environment leg (`WIN_ENV=staging`) uses the same code paths
-  by construction (icon and names key off APPLICATION_SHORTNAME) but had
-  not run yet at the time of the first green production build.
+- ~~The staging Environment leg~~ GREEN the same day (job 16255259217,
+  60 min): `dist/windows-staging/aity-drive-staging-7.1.0.33-windows-x86_64.exe`
+  (+ .sha256), branded icon and renamed ride-alongs confirmed in CI.
+- **Playing the job with a variable: `glab api ... /play --field
+  'job_variables_attributes[][key]=...'` does NOT send the variable** - the
+  job runs with the yml default and nothing warns (one production build got
+  duplicated exactly this way). What works: create a pipeline with the
+  variable (`POST /projects/:id/pipeline`, JSON body
+  `{"ref":"main","variables":[{"key":"WIN_ENV","value":"staging"}]}`) and
+  play `build:windows` inside it - pipeline variables outrank yml job
+  variables. Verify from the trace (`materialize: staging tree ready`)
+  within the first minutes, not from the play response.
