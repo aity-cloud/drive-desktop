@@ -6,10 +6,19 @@
 #   AITY_MATERIALIZED  absolute path of the materialised tree
 #   CRAFT_TARGET       Craft target, e.g. windows-cl-msvc2022-x86_64
 
-if ($IsWindows) {
+# $IsWindows exists only in PowerShell Core; the SaaS runner uses Windows
+# PowerShell 5.1, where it is $null - which sent this down the python3
+# branch and, because the error was non-terminating, let the script exit 0
+# with nothing done (job 16251186600). $env:OS is Windows_NT on every
+# Windows PowerShell.
+if ($env:OS -eq 'Windows_NT') {
     $python = (python -c "import sys; print(sys.executable)")
 } else {
     $python = (Get-Command python3).Source
+}
+if (-not $python) {
+    Write-Error "craft.ps1: could not resolve a python interpreter"
+    exit 1
 }
 
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $myInvocation.MyCommand.Definition)
