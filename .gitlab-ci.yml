@@ -153,17 +153,27 @@ build:windows:
     - '& "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -format json | Out-Host'
     - if (-not (Get-Command python -ErrorAction SilentlyContinue)) { choco install -y python312 --no-progress | Out-Host; refreshenv }
     - python --version
-    # git-bash runs the repo's sh scripts. Its location is NOT guessable:
-    # "$env:ProgramFiles\Git\bin\bash.exe" does not exist on the SaaS runner
-    # (first run, 2026-09-02). git itself is always present (it cloned this
-    # repo), so ask IT where it lives and print the ground truth. Do not use
-    # `Get-Command bash` - that can resolve to WSL's System32\bash.exe.
+    # git-bash runs the repo's sh scripts (they are real bash: arrays,
+    # shopt). The SaaS runner has NO bash at all: no Git for Windows under
+    # $env:ProgramFiles (run 1, 2026-09-02), and its git is MinGit at C:\Git
+    # with no bash.exe in bin/ or usr/bin/ (run 2). So probe the plausible
+    # spots, and when every one misses, install full Git for Windows via
+    # choco (preinstalled on the image) - that is the only bash this job can
+    # get. Do not use `Get-Command bash`: it can resolve to WSL's
+    # System32\bash.exe, which has no distro on a CI image.
     - |
       $gitroot = Split-Path (Split-Path (Split-Path ((& git --exec-path) -replace '/','\')))
-      $env:AITY_BASH = @("$gitroot\bin\bash.exe", "$gitroot\usr\bin\bash.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+      $candidates = @("$gitroot\bin\bash.exe", "$gitroot\usr\bin\bash.exe", "$env:ProgramFiles\Git\bin\bash.exe")
+      $env:AITY_BASH = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+      if (-not $env:AITY_BASH) {
+        Write-Host "no bash at any of: $($candidates -join '; ') - installing Git for Windows"
+        choco install -y git --no-progress | Out-Host
+        $env:AITY_BASH = "$env:ProgramFiles\Git\bin\bash.exe"
+      }
       Write-Host "git exec-path: $(& git --exec-path)"
       Write-Host "git-bash resolved to: $env:AITY_BASH"
-      if (-not $env:AITY_BASH) { Get-ChildItem $gitroot | Out-Host; throw "no bash.exe under $gitroot" }
+      if (-not (Test-Path $env:AITY_BASH)) { throw "still no bash.exe at $env:AITY_BASH after choco install" }
+      & $env:AITY_BASH --version | Out-Host
     - '& $env:AITY_BASH scripts/materialize.sh $env:WIN_ENV'
     - git clone --depth=1 https://invent.kde.org/kde/craftmaster.git "$env:USERPROFILE/craft/CraftMaster/CraftMaster"
     - $env:AITY_MATERIALIZED = "$env:CI_PROJECT_DIR/build/materialized/$env:WIN_ENV" -replace '\\','/'
