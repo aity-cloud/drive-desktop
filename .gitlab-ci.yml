@@ -165,8 +165,11 @@ build:windows:
     - if ($env:WIN_ENV -eq "staging") { $env:APPLICATION_EXECUTABLE = "aity-drive-staging"; $env:APPLICATION_SHORTNAME = "aitydrive-staging" } else { $env:APPLICATION_EXECUTABLE = "aity-drive"; $env:APPLICATION_SHORTNAME = "aitydrive" }
     - scripts/craft.ps1 -c --no-cache owncloud/owncloud-client
     - scripts/craft.ps1 -c --no-cache --package owncloud/owncloud-client
-    - New-Item -ItemType Directory -Force "dist/windows-$env:WIN_ENV" | Out-Null
-    - Copy-Item "$env:USERPROFILE/craft/binaries/*" "dist/windows-$env:WIN_ENV/"
+    # Same collector as the AppImage and macOS jobs, via git-bash: Craft
+    # names the installer after the blueprint (owncloud-client-HEAD-<n>-*),
+    # and meta/AGENTS.md allows no "owncloud" in anything we hand out.
+    - $env:COLLECT_DEST = "dist/windows-$env:WIN_ENV"
+    - '& "$env:ProgramFiles\Git\bin\bash.exe" scripts/collect-binaries.sh $env:WIN_ENV'
     - Get-ChildItem "dist/windows-$env:WIN_ENV"
   artifacts:
     when: always
