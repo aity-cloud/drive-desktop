@@ -51,7 +51,13 @@ chmod +x "$APPIMAGE"
 WORK=$(mktemp -d)
 CLIENT_PID=""
 cleanup() {
-    [ -n "$CLIENT_PID" ] && kill "$CLIENT_PID" 2>/dev/null && wait "$CLIENT_PID" 2>/dev/null
+    # every step tolerant: set -e is live inside this trap, and the killed
+    # client's wait status (143) must not become the JOB's exit code - it
+    # did exactly that on the first container run (PASS printed, exit 143)
+    if [ -n "$CLIENT_PID" ]; then
+        kill "$CLIENT_PID" 2>/dev/null || true
+        wait "$CLIENT_PID" 2>/dev/null || true
+    fi
     rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -69,7 +75,17 @@ export XDG_RUNTIME_DIR="$WORK/xdg-runtime"
 mkdir -p "$HOME" "$XDG_RUNTIME_DIR" "$WORK/logs"
 chmod 700 "$XDG_RUNTIME_DIR"
 
-# qtkeychain needs a Secret Service on this session bus.
+# qtkeychain needs a Secret Service on this session bus. In a fresh
+# container there is no login keyring at all, and CREATING a collection
+# over the API needs a GUI prompt (gcr-prompter dies with "cannot open
+# display", the CreateCollection prompt is dismissed, the job fails - CI
+# job 16251680059). So pre-create a blank-password login keyring on disk:
+# gnome-keyring stores blank-password keyrings in this plaintext format,
+# and unlocking one over the API succeeds without any prompt.
+mkdir -p "$HOME/.local/share/keyrings"
+printf '[keyring]\ndisplay-name=login\nctime=0\nmtime=0\nlock-on-idle=false\nlock-after=false\n' \
+    > "$HOME/.local/share/keyrings/login.keyring"
+printf 'login' > "$HOME/.local/share/keyrings/default"
 eval "$(echo -n "" | gnome-keyring-daemon --unlock --components=secrets --daemonize)"
 export GNOME_KEYRING_CONTROL
 note "keyring up on the private session bus"
