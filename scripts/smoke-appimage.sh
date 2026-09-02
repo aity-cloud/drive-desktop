@@ -18,9 +18,8 @@
 # libowncloudsync (we override, upstream does not delete), so its literal is
 # always present; runtime behaviour is what the override changes.
 #
-# A real sync round-trip is not possible non-interactively at this Pin:
-# owncloudcmd was removed upstream (the only client is the GUI, OIDC-only).
-# See MAINTAINING.md "Sync smoke gap".
+# The real sync round-trip against the live Environment is the separate
+# smoke:sync job (scripts/smoke-sync.sh; MAINTAINING.md "Sync smoke").
 set -euo pipefail
 
 APPIMAGE="${1:?usage: $0 <AppImage> <production|staging>}"

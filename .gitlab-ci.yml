@@ -289,9 +289,9 @@ build:macos:
       - dist/
 
 # ---------------------------------------------------------------------------
-# smoke: run what was built. Branding facts only - a real sync round-trip is
-# impossible non-interactively at this Pin (owncloudcmd is gone, the GUI is
-# OIDC-only; MAINTAINING.md "Sync smoke gap" has the full investigation).
+# smoke: run what was built. smoke:appimage asserts the branding facts
+# without a server; smoke:sync round-trips a real file against the live
+# Environment through the shipped client (MAINTAINING.md "Sync smoke").
 # ---------------------------------------------------------------------------
 smoke:appimage:
   stage: smoke
@@ -312,19 +312,52 @@ smoke:appimage:
         bash scripts/smoke-appimage.sh "$1" "$AITY_ENV"
       done
 
-# TODO(sync-smoke): skeleton for the real sync round-trip against
-# https://drive.aity.works, deliberately disabled. What it needs and why it
-# does not exist yet is written down in MAINTAINING.md "Sync smoke gap":
-# no headless client exists at the Pin, so this becomes either an upstream
-# GUI-test harness (Squish, licence needed) or waits for a CLI to return.
+# The real sync round-trip against https://drive.aity.works: the STAGING
+# AppImage runs headless (offscreen QPA, private dbus session, gnome-keyring
+# as the Secret Service), an account is seeded by scripts/smoke-sync.py, and
+# a file must sync local -> server and server -> local. Cleans up after
+# itself and sweeps litter from failed runs (staging hygiene rule).
+# python3-pyqt6 is what serialises the capabilities QVariantMap into the cfg
+# in Qt's own encoding - do not replace it with a hand-rolled writer
+# (MAINTAINING.md "Sync smoke").
 smoke:sync:
   stage: smoke
   image: $SMOKE_IMAGE
   needs: [build:appimage]
+  retry:
+    max: 2
+    when: [runner_system_failure, api_failure, unknown_failure]
   rules:
-    - when: never
+    # AITY_CONTRACT_USER / AITY_CONTRACT_PASSWORD are the protected group
+    # variables the meta contract tests already use; without them the job
+    # cannot exist.
+    - if: $AITY_CONTRACT_USER
   script:
-    - echo "see MAINTAINING.md - no non-interactive auth + sync path at this Pin"
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends binutils libfontconfig1 libfreetype6 libglib2.0-0 libgl1 libegl1 libopengl0 libglx0 libxkbcommon0 libxkbcommon-x11-0 libx11-6 libxcb1 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xkb1 libdbus-1-3 ca-certificates dbus gnome-keyring python3 python3-pyqt6 python3-secretstorage >/dev/null
+    - set -- dist/staging/*.AppImage
+    - '[ $# -eq 1 ] && [ -f "$1" ] || { echo "expected exactly one AppImage in dist/staging, got: $*"; exit 1; }'
+    - bash scripts/smoke-sync.sh "$1" staging
+
+# The production twin signs in as a real user on https://drive.aity.tech and
+# writes files there, so - exactly like meta's contract:production - a human
+# decides when it runs. Needs the _PROD credential variables (a production
+# contract user does not exist yet; create it per meta/contract/README.md
+# "The test account" and store AITY_CONTRACT_USER_PROD /
+# AITY_CONTRACT_PASSWORD_PROD on the aity-cloud/drive group).
+smoke:sync:production:
+  stage: smoke
+  image: $SMOKE_IMAGE
+  needs: [build:appimage]
+  rules:
+    - if: $AITY_CONTRACT_USER_PROD
+      when: manual
+      allow_failure: true
+  script:
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends binutils libfontconfig1 libfreetype6 libglib2.0-0 libgl1 libegl1 libopengl0 libglx0 libxkbcommon0 libxkbcommon-x11-0 libx11-6 libxcb1 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xkb1 libdbus-1-3 ca-certificates dbus gnome-keyring python3 python3-pyqt6 python3-secretstorage >/dev/null
+    - export AITY_CONTRACT_USER="$AITY_CONTRACT_USER_PROD" AITY_CONTRACT_PASSWORD="$AITY_CONTRACT_PASSWORD_PROD"
+    - set -- dist/production/*.AppImage
+    - '[ $# -eq 1 ] && [ -f "$1" ] || { echo "expected exactly one AppImage in dist/production, got: $*"; exit 1; }'
+    - bash scripts/smoke-sync.sh "$1" production
 
 # ---------------------------------------------------------------------------
 # publish-staging / promote: tag pipelines only. UNVERIFIED SCAFFOLDS - no
@@ -357,6 +390,12 @@ sign:windows:
       fi
     - echo "AZURE_* present but the signing implementation is still TODO (tracked in MAINTAINING.md)" && exit 1
 
+# Staging Environment build to the tag's release on the Public Mirror,
+# marked pre-release (ADR 0004, channels table). One tag = one GitHub
+# release: promote later flips this same release to a full Release, so the
+# staging assets stay attached for the record. UNVERIFIED until the first
+# tag runs with the token (scripts/github-release.sh is exercised against
+# fixtures, not against GitHub).
 publish:staging-prerelease:
   stage: publish-staging
   image: registry.aity.tech/catalog/library/alpine:3.22
@@ -364,23 +403,16 @@ publish:staging-prerelease:
   rules:
     - if: $CI_COMMIT_TAG && $GITHUB_RELEASES_TOKEN
   script:
-    # UNVERIFIED skeleton (no tag has run it): staging Environment build to
-    # a pre-release marked staging on the Public Mirror (ADR 0004,
-    # channels table in the spec).
-    - apk add --no-cache curl jq >/dev/null
-    - |
-      set -eu
-      REPO=aity-cloud/drive-desktop
-      api() { curl -sSf -H "Authorization: Bearer $GITHUB_RELEASES_TOKEN" -H "Accept: application/vnd.github+json" "$@"; }
-      RELEASE=$(api -X POST "https://api.github.com/repos/$REPO/releases" \
-        -d "{\"tag_name\":\"$CI_COMMIT_TAG\",\"name\":\"$CI_COMMIT_TAG (staging)\",\"prerelease\":true,\"body\":\"Staging Environment build for verification before promote. Server: https://drive.aity.works\"}")
-      UPLOAD_URL=$(echo "$RELEASE" | jq -r '.upload_url' | sed 's/{.*}//')
-      for f in dist/staging/*; do
-        curl -sSf -H "Authorization: Bearer $GITHUB_RELEASES_TOKEN" -H "Content-Type: application/octet-stream" \
-          --data-binary @"$f" "$UPLOAD_URL?name=$(basename "$f")" >/dev/null
-      done
-      echo "staging pre-release published for $CI_COMMIT_TAG"
+    - apk add --no-cache bash curl jq >/dev/null
+    - bash scripts/github-release.sh prerelease "$CI_COMMIT_TAG" dist/staging/*
 
+# The single manual act that makes a release public (meta/CONTEXT.md
+# "Promote"): production installers, the zsync control file for AppImage
+# self-update, and the complete corresponding source (ADR 0004: the
+# materialised tree, buildable without reconstructing it from a recipe) onto
+# the tag's GitHub Release; regenerated update feeds onto the mirror's
+# gh-pages branch with the same deploy key mirror:github uses. Pages itself
+# is enabled by Raul in the mirror's repo settings, never from here.
 promote:
   stage: promote
   image: docker.io/library/ubuntu:24.04
@@ -390,23 +422,47 @@ promote:
       when: manual
       allow_failure: false
   script:
-    # UNVERIFIED skeleton: the single manual act that makes a release
-    # public (meta/CONTEXT.md "Promote"): production installers + source
-    # tarball to a GitHub Release, regenerated update feeds to the mirror's
-    # Pages branch (Pages itself is enabled by Raul in the repo settings,
-    # not from here).
-    - apt-get update -qq && apt-get install -y -qq curl jq git zsync >/dev/null
+    - apt-get update -qq && apt-get install -y -qq curl jq git zsync openssh-client ca-certificates >/dev/null
+    - bash scripts/materialize.sh production
     - |
       set -eu
       REPO=aity-cloud/drive-desktop
       VERSION_FULL="${UPSTREAM_TAG#v}.$CI_PIPELINE_IID"
       APPIMAGE=$(basename dist/production/*.AppImage)
+      SRC_TAR="aity-drive-$VERSION_FULL-source.tar.gz"
+      tar -C build/materialized -czf "dist/production/$SRC_TAR" --exclude-vcs \
+        --transform "s,^production,aity-drive-$VERSION_FULL-source," production
       zsyncmake -u "https://github.com/$REPO/releases/download/$CI_COMMIT_TAG/$APPIMAGE" \
         -o "dist/production/$APPIMAGE.zsync" "dist/production/$APPIMAGE"
       bash scripts/gen-update-feeds.sh --version "$VERSION_FULL" --tag "$CI_COMMIT_TAG" --appimage "$APPIMAGE"
-      echo "TODO(first promote): create the GitHub Release via the API (like publish:staging-prerelease),"
-      echo "attach dist/production/* + the materialised source tarball (ADR 0004), and push public/ to the"
-      echo "mirror's gh-pages branch with GITHUB_MIRROR_KEY. Kept failing until implemented end-to-end."
-      exit 1
+      bash scripts/github-release.sh promote "$CI_COMMIT_TAG" dist/production/*
+    # update feeds to the mirror's gh-pages branch. Same SSH setup as
+    # mirror:github (meta/ci/mirror.yml): pinned host keys, the per-repo
+    # write deploy key, CI as the only writer of the mirror.
+    - |
+      set -eu
+      MIRROR="git@github.com:aity-cloud/drive-desktop.git"
+      mkdir -p ~/.ssh && chmod 700 ~/.ssh
+      { cat "$GITHUB_MIRROR_KEY"; echo; } > ~/.ssh/mirror_key && chmod 600 ~/.ssh/mirror_key
+      cat > ~/.ssh/known_hosts <<'HOSTS'
+      github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
+      github.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5YRrYMjNuG5N87uRgg6CLrbo5wAdT/y6v0mKV0U2w0WZ2YB/++Tpockg=
+      HOSTS
+      export GIT_SSH_COMMAND="ssh -i ~/.ssh/mirror_key -o IdentitiesOnly=yes -o UserKnownHostsFile=~/.ssh/known_hosts -o StrictHostKeyChecking=yes"
+      PAGES=$(mktemp -d)
+      if git clone --depth=1 --branch gh-pages "$MIRROR" "$PAGES" 2>/dev/null; then
+        echo "gh-pages exists, updating"
+      else
+        git init -q -b gh-pages "$PAGES"
+        git -C "$PAGES" remote add origin "$MIRROR"
+      fi
+      mkdir -p "$PAGES/update"
+      cp -r public/update/. "$PAGES/update/"
+      touch "$PAGES/.nojekyll"
+      git -C "$PAGES" add -A
+      git -C "$PAGES" -c user.name="aity-drive-ci" -c user.email="raul@aity.ro" \
+        commit -q -m "update feeds for $CI_COMMIT_TAG" || echo "feeds unchanged"
+      git -C "$PAGES" push origin gh-pages
+      echo "update feeds published for $CI_COMMIT_TAG"
 
 # mirror:github comes from meta/ci/mirror.yml (stage: mirror)

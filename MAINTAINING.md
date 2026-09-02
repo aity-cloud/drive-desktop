@@ -4,114 +4,91 @@ Traps this Factory has actually hit, and the standing gaps. The generic
 loop (watch, response targets, per-Bump checklist) is
 `../meta/docs/maintenance.md`; the Pin mechanics are `UPSTREAM.md`.
 
-## Sync smoke gap: RE-INVESTIGATED 2026-08-27, still not worth building
+## Sync smoke: CLOSED 2026-09-02 - a real round-trip runs in CI
 
-Verdict: **do not build a desktop sync smoke at this Pin.** The three routes
-that could make one honest are all closed, and one of them is closed by a
-staging defect that has to be fixed anyway (below). Revisit when upstream
-ships a CLI again, or when someone buys a Squish licence.
+`smoke:sync` round-trips a real file both ways through the SHIPPED staging
+AppImage against `https://drive.aity.works`, headless, on every pipeline.
+`smoke:sync:production` is its manual twin against production (it signs in
+as a real user and writes files there, so a human decides - and it stays
+invisible until `AITY_CONTRACT_USER_PROD` / `AITY_CONTRACT_PASSWORD_PROD`
+exist; no production contract user has been created yet).
 
-The spec asks for an `owncloudcmd` sync round-trip against
-`https://drive.aity.works`. That was already known to be impossible at Pin
-v7.1.0; what follows is the evidence, re-checked against the artifact we
-actually ship rather than against docs.
+How: `scripts/smoke-sync.sh` extracts the AppImage (no FUSE in CI), starts a
+private dbus session with gnome-keyring as the Secret Service, and
+`scripts/smoke-sync.py seed` signs in as `drive-desktop` (authorization code
++ PKCE, the realm's identity-first pages - the flow meta's
+`drive_client_auth.py` proves) and plants a ready-to-sync account. The
+client runs under `QT_QPA_PLATFORM=offscreen` and does everything a user's
+client does: reads the keychain, refreshes the token, connects, syncs. The
+`verify` phase then proves a file goes local -> server and server -> local,
+sweeps `smoke-sync-*` litter from earlier failed runs, and deletes what it
+created (staging hygiene rule).
 
-### 1. There is no headless entry point in the shipped AppImage
+The two claims of the 2026-08-27 investigation still hold: there is no
+headless entry point in the AppImage (one binary, no sync/account CLI
+options, `owncloudcmd` is gone at this Pin) and upstream's own GUI harness
+is Squish (commercial) plus Playwright for the OIDC page. What changed is
+the third route: seeding the config stopped being guesswork once each piece
+was pinned to the code, and the WAF fix (below) made the login provable
+first. Every trap found on the way, so a Bump knows what to re-verify
+(all paths `src/` of the materialised tree):
 
-Checked by unpacking `dist/staging/aity-drive-staging-7.1.0.7-linux-x86_64.AppImage`
-from build job 16141478570 (`--appimage-extract`), not by reading the tree:
+- **A seeded account whose `capabilities` value is missing, unparseable or
+  not spaces-enabled is DELETED at load**, credentials included
+  (`AccountManager::loadAccountHelper`: `settings.remove("")`). The seeder
+  fetches the LIVE `/ocs/v2.php/cloud/capabilities` map and lets Qt itself
+  serialise it - python3-pyqt6's QSettings writes the `@Variant` QVariantMap
+  encoding the client reads. Never hand-roll that encoding.
+- **The client only asks the keychain for keys book-kept in the cfg**:
+  `CredentialManager::get` checks `[Credentials/<scope>]` first and logs
+  `We don't know "http/oauthtoken" skipping retrieval from keychain` if the
+  entry is absent. The scope is `<appName>_credentials:<host>:<uuid>`
+  (`credentialKeyC()` - the prefix is the BRANDED app name, not a literal).
+- **The keychain entry** (qtkeychain 0.15, libsecret backend): service =
+  `Theme::appName()` (`aitydrive-staging` / `aitydrive`), key =
+  `<scope>:http/oauthtoken`, item attributes `user`/`server`/`type=base64`,
+  secret = base64 of a CBOR text string (`CredentialJob` parses CBOR).
+  python3-secretstorage creates a matching item; gnome-keyring must be
+  unlocked on the session bus first.
+- **An account alone syncs nothing.** The default theme has
+  `syncNewlyDiscoveredSpaces() == false`, and the wizard-only
+  `setUpInitialSyncFolders` path never runs for config-loaded accounts, so
+  the seeder writes one Folder definition for the personal space too. Keys
+  per `FolderDefinition::save` - the display name key is `displayString`,
+  the journal is `.sync_journal.db` (`SyncJournalDb::makeDbName`), and the
+  journal file itself need not exist.
+- **A file written into the folder in the same second the client discovers
+  it is not uploaded.** The propagator defers it ("Local file changed
+  during sync. It will be resumed.") and the resume never re-examined it
+  (observed against 7.1.0.20). The verify phase writes the file OUTSIDE the
+  folder, backdates its mtime 30s, and renames it in atomically.
+- **The probe must not share the client's tokens.** Keycloak rotates
+  refresh tokens: after the client's first refresh the seeder's copy is
+  dead. `verify` holds its own password-grant token on the `drive` client
+  (the one client the realm allows the grant on, same as
+  `drive_contract.py`), re-granted on 401 so long polls survive expiry.
 
-- `usr/bin/` contains exactly ONE program, `aity-drive-staging`. No
-  `owncloudcmd`, no second tool, nothing else executable but `AppRun` and a
-  couple of stray perl scripts from the bundled OpenSSL.
-- `AppRun --help` offers `-s/--show`, `-q/--quit`, `--logfile`, `--logdir`,
-  `--logflush`, `--logdebug`, `--debug`. There is no sync, no account and no
-  non-interactive mode among them.
-- The source agrees: the only `add_executable` in `src/` is
-  `src/gui/CMakeLists.txt:154`, `add_executable(owncloud main.cpp)` (plus the
-  crash reporter and a test helper). `owncloudcmd.desktop.in` survives in the
-  tree as a leftover with nothing behind it.
+What is still true and worth keeping in mind: the branding facts stay in
+`smoke:appimage` (no server needed there), and the sync smoke's seeding
+touches private on-disk formats, so a Pin bump re-runs this job as its
+proof - if upstream reshapes the cfg or the credential scope, the smoke
+fails loudly and this section plus `scripts/smoke-sync.py` are what to
+update.
 
-### 2. Upstream's GUI harness is Squish, and Squish alone is not enough
+### The staging WAF used to 403 the desktop's loopback redirect (FIXED 2026-08-27)
 
-`test/gui/suite.conf` is a Squish suite (`WRAPPERS=Qt`, `AUT=owncloud`,
-`OBJECTMAPSTYLE=script`) and `.github/workflows/gui-tests.yml` runs it inside
-`owncloudci/squish:fedora-42-8.1.0-qt68x-linux64`. Squish is commercial and
-licence-gated, so that harness is not available to us.
-
-Worth knowing before anyone prices a licence: **Squish would only be half of
-it.** `test/gui/requirements.txt` now pulls `pytest-playwright` and the
-Makefile runs `playwright install chromium`, because
-`shared/scripts/helpers/WebUIHelper.py` drives the OIDC login page with
-Playwright while Squish drives the Qt GUI. Adopting the harness means adopting
-both halves.
-
-### 3. Seeding the config plus a token: possible, but exactly the brittle
-harness this investigation exists to avoid
-
-- Accounts live in `owncloud.cfg` (QSettings) via
-  `AccountManager::saveAccount`, and the tokens go through QtKeychain
-  (`CredentialManager::set`, service name = `Theme::instance()->appName()`,
-  i.e. the branded app name). On Linux that means a Secret Service daemon has
-  to run in CI before anything can be seeded at all.
-- The killer is `AccountManager::loadAccountHelper`: an account whose stored
-  `capabilities` blob is missing or lacks spaces support is not just ignored,
-  it is **deleted from the config** (`settings.remove("")`). So a seeded
-  account has to carry a full, valid serialised capabilities map captured from
-  a real login - a private serialisation format, re-verified on every Bump.
-- And it still would not be a sync test: `Folders` entries, a sync journal and
-  a running GUI event loop would all have to be reproduced before a single
-  file moved. A raw WebDAV round trip with such a token tests the server, not
-  the client, and Tier 1 already does that properly.
-
-### 4. Blocking defect found while investigating: staging 403s the desktop
-
-   **FIXED 2026-08-27.** The staging gateway had no loopback exception at
-   all (prod's rule 10023 listed only ownCloud's stock client ids and the
-   staging twin was missing entirely), so every loopback redirect got a
-   bare 403 - not just ours. Both gateways now list the drive ids and
-   staging has the 10023/10024 twin
-   (infra/harvester-cluster `platform/istio/values.yaml`). Verified end to
-   end: `drive-desktop` completes authorization, token exchange, a rotated
-   refresh, and oCIS accepts the token. Removed from `KNOWN_BLOCKED` in
-   meta's `contract/drive_client_auth.py`.
-client's login
-
-Independent of everything above, the desktop client **cannot log in to
-staging today**. Its redirect URIs are loopback (`http://127.0.0.1:*`,
-`http://localhost:*`, identity table) and the edge rejects any authorization
-request carrying one:
-
-```
-GET https://auth.aity.works/realms/aity/protocol/openid-connect/auth
-    ?client_id=drive-desktop&...&redirect_uri=<uri>
-
-  redirect_uri=https%3A%2F%2Fexample.com      -> 400  (Keycloak: invalid redirect)
-  redirect_uri=http%3A%2F%2Flocalhost%3A51234 -> 403  (server: istio-envoy, empty body)
-  redirect_uri=http%3A%2F%2F127.0.0.1%3A51234 -> 403  (server: istio-envoy, empty body)
-  redirect_uri=http%3A%2F%2F127.0.0.1%2F      -> 403  (server: istio-envoy, empty body)
-```
-
-The 400 proves the request reaches Keycloak when the redirect is not
-loopback; the 403s come from the gateway with an empty body, which is the WAF
-signature. The same probe against `drive-ios` and `drive-android` (custom
-schemes, not loopback) completes the whole authorization-code + PKCE flow and
-oCIS accepts the resulting token, so this is specific to the loopback
-redirect, not to the client or the realm.
-
-Consequence: a human cannot test the desktop client against staging either,
-which makes this a release blocker for `drive/desktop` long before it is a
-testing problem. It is the open "staging WAF blocks loopback OIDC" decision;
-the fix belongs in the gateway's WAF rules, not here.
-
-### What the Factory tests instead
-
-`smoke:appimage` verifies the branding facts (the binary runs and identifies
-itself, the baked server URL and OIDC client id, the updater posture per
-Environment) and the `smoke:sync` job in `.gitlab-ci.yml` stays a
-`when: never` skeleton pointing here. The Clients' end-to-end sync behaviour
-is covered on iOS and Android (Tier 2), where the login can be driven; the
-server contract is covered by Tier 1 (`meta/contract/drive_contract.py`).
+The staging gateway had no loopback exception at all (prod's rule 10023
+listed only ownCloud's stock client ids and the staging twin was missing
+entirely), so every authorization request with a loopback `redirect_uri`
+got a bare 403 from istio-envoy - the desktop client, whose redirects are
+all loopback, could not sign in at all, and neither could a human testing
+it. Both gateways now list the drive ids and staging has the 10023/10024
+twin (infra/harvester-cluster `platform/istio/values.yaml`). Verified end
+to end: `drive-desktop` completes authorization, token exchange, a rotated
+refresh, and oCIS accepts the token; removed from `KNOWN_BLOCKED` in meta's
+`contract/drive_client_auth.py`. Diagnostic worth keeping: a 403 with an
+empty body and `Server: istio-envoy` on the auth endpoint is the WAF, while
+Keycloak answers a 400 to a bad-but-reachable redirect.
 
 ## Traps
 
@@ -173,11 +150,21 @@ server contract is covered by Tier 1 (`meta/contract/drive_contract.py`).
 - `sign:windows`: no-op until `AZURE_*` variables exist (runbook
   `../meta/docs/runbooks/publisher-accounts.md` section 4); the Jsign
   invocation is sketched in the job.
-- `publish:staging-prerelease` / `promote`: gated on a
-  `GITHUB_RELEASES_TOKEN` variable that does not exist yet (the mirror
-  deploy key cannot create releases); promote additionally still needs
-  the release-creation + Pages-push implementation and deliberately
-  fails until then. Pages on the mirror is enabled by Raul, never by CI.
+- `publish:staging-prerelease` / `promote`: implemented end to end
+  (2026-09-02) but UNVERIFIED - no tag has run them, and both stay
+  invisible until the `GITHUB_RELEASES_TOKEN` variable exists (the mirror
+  deploy key cannot create releases). One release per tag: the staging
+  pre-release is created first and promote flips the SAME release to a
+  full Release, adds the production assets, the AppImage's .zsync and the
+  materialised source tarball (ADR 0004), and pushes the update feeds to
+  the mirror's gh-pages branch with `GITHUB_MIRROR_KEY`. What Raul must
+  create, once: a GitHub FINE-GRAINED token scoped to the single repo
+  `aity-cloud/drive-desktop` with the "Contents" repository permission set
+  to read-write (releases ride the contents permission; no narrower one
+  exists), stored as a protected+masked CI variable
+  `GITHUB_RELEASES_TOKEN` on `aity-cloud/drive` (group level, so the other
+  desktop-adjacent factories can reuse the pattern) - plus enabling Pages
+  on the mirror (source: gh-pages branch, root) in the repo settings.
 
 ## Smoke image: libOpenGL.so.0 (hit 2026-08-25)
 
