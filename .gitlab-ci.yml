@@ -142,6 +142,11 @@ build:windows:
   tags: [saas-windows-medium-amd64]
   needs: []
   timeout: 3h
+  # NOT interruptible, same reasoning as build:macos: this job is manual and
+  # expensive, and it pays for its minutes. A docs-sized push to main
+  # auto-canceled the first real run 10 minutes in (job 16251430662,
+  # 2026-09-02) - purchased compute thrown away by an unrelated commit.
+  interruptible: false
   rules:
     - when: manual
       allow_failure: true
