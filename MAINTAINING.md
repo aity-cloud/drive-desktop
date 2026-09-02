@@ -186,9 +186,10 @@ instead.
 
 ## Unverified scaffolds (state as of 2026-08-25)
 
-- `build:windows`: written from upstream's workflow, wall-clock on the
-  2 vCPU hosted runner to be measured on first manual run (spec flags it;
-  fallback is a Windows VM on Harvester registered as `windows`).
+- `build:windows`: GREEN since 2026-09-02 (below). Wall-clock on the
+  hosted runner: 61 minutes for one Environment build (production leg,
+  job 16253630690), so both Environments cost about two hours of purchased
+  minutes per release. The Harvester Windows VM fallback stays unneeded.
 - `build:macos`: cannot run until the `macos` runner exists (M0).
 - `sign:windows`: no-op until `AZURE_*` variables exist (runbook
   `../meta/docs/runbooks/publisher-accounts.md` section 4); the Jsign
@@ -507,3 +508,68 @@ Application) puts it in the login keychain, where the runner will find it
 immediately. `developer_id_certificate_bootstrap` does the same AND pushes it
 to the match store, which is what a second machine or a different runner
 would need later.
+
+## Windows: the first green run (2026-09-02, job 16253630690)
+
+Seven plays got there, each failure one layer deeper - the expected pattern
+for a first Craft run on a new platform. What the SaaS runner
+(`saas-windows-medium-amd64`) actually is, measured not assumed:
+
+- VS 2022 Build Tools 17.14 (VC x64 present - the vswhere preflight passes),
+  Python 3.13 on PATH, chocolatey present.
+- **Its git is MinGit at `C:\Git`** (cmd/etc/mingw64/usr, no bash.exe
+  anywhere) and there is NO Git for Windows under `Program Files`. The
+  preflight resolves bash by deriving the install root from `git
+  --exec-path`, probing known spots, and `choco install -y git` only when
+  every probe misses (about a minute). Never `Get-Command bash`: that can
+  find WSL's `System32\bash.exe`, which has no distro on a CI image.
+- **Jobs run under Windows PowerShell 5.1, not PowerShell Core.**
+  `$IsWindows` is NULL there. craft.ps1 used it and took the unix branch;
+  worse, the failure was non-terminating, `$LASTEXITCODE` stayed stale at 0,
+  and craft.ps1 exited 0 having done NOTHING - every craft step no-opped and
+  the job only died at collection, which is the most expensive way to learn
+  it. Branch on `$env:OS -eq 'Windows_NT'` and exit explicitly.
+- **Craft derives patch.exe/sed.exe from the first git on PATH.**
+  `dev-utils/git` goes virtual for any system git >= 2.27 and `locateGit()`
+  is `findApplication("git")`; the patch/sed blueprints then take
+  `<gitdir>\..\usr\bin\*.exe` (verified in craft-core
+  `blueprints/dev-utils/_windows/{git,patch}`). MinGit qualifies on version
+  and lacks both tools, so kshimgen failed the bootstrap at
+  `dev-utils/patch`. The preflight puts full Git for Windows' `cmd` dir
+  first on PATH and asserts both tools exist BEFORE anything is built.
+- **The blueprint's NSIS icon hardcode is FATAL on Windows, not cosmetic.**
+  `createPackage` pins `<buildDir>/src/gui/owncloud.ico`; a branded build
+  writes `$APPLICATION_ICON_NAME.ico`, and makensis ABORTS on the missing
+  file - after the whole client has compiled. The job copies the branded
+  .ico to the hardcoded name between build and `--package` (the name never
+  leaves the build dir; the installer carries the branded artwork). The
+  real fix stays an upstream blueprint PR (env-var lookup like appname).
+- **`interruptible: true` + purchased minutes is money on fire.** A
+  docs-sized push to main auto-canceled the first real run 10 minutes in.
+  `build:windows` is now `interruptible: false`, same reasoning as macOS.
+- **Craft's package step drops its binary-cache machinery beside the
+  installer**: `owncloud-client-HEAD-<n>-*.7z` (the raw image archive) plus
+  `manifest.json`. The collector now swaps the `owncloud-client` prefix for
+  the branded executable name on every ride-along, on all platforms - the
+  first green run shipped that .7z into dist/ under the trademark name.
+- Timing of the green run: ~9 min to the client build's first compile
+  (bootstrap + Qt from binary cache), 476 objects in ~35 min, package +
+  NSIS ~3 min, 61 min total. The 2 vCPU runner is slow but nowhere near
+  the 3h timeout.
+- The wget Craft bootstraps with cannot verify files.kde.org's Sectigo
+  chain and fails; Craft falls back to System32 curl.exe and continues.
+  Noise, not a defect - do not chase it in a failed log.
+
+Still open after the green run:
+
+- **Signing**: `sign:windows` stays a no-op until Raul finishes Azure
+  Artifact Signing identity validation and the `AZURE_*` variables exist
+  (runbook `../meta/docs/runbooks/publisher-accounts.md` section 4). The
+  Jsign-on-Linux shape is unchanged.
+- **Real-hardware testing**: the .exe installer has never been executed on
+  a real Windows machine - install, login against staging, sync, uninstall
+  are all unproven. Needs a human with a Windows box (or the Harvester
+  Windows VM) once a staging-Environment installer exists.
+- The staging Environment leg (`WIN_ENV=staging`) uses the same code paths
+  by construction (icon and names key off APPLICATION_SHORTNAME) but had
+  not run yet at the time of the first green production build.

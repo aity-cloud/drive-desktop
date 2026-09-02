@@ -65,11 +65,15 @@ for f in "${artifacts[@]}"; do
     fi
 done
 
-# anything else craft emitted (debug archives etc.) rides along unrenamed
+# anything else craft emitted (image/debug archives, cache manifests) rides
+# along - but never under the blueprint's name: the Windows run shipped
+# owncloud-client-HEAD-29-*.7z into dist/ that way. Swap the blueprint
+# prefix for ours; files without it keep their names.
 for f in "$SRC"/*; do
     case "$f" in
         *.sha256) rm -f "$f" ;;    # regenerated above for the renamed file
-        *) mv "$f" "$DEST/" ;;
+        *) base=$(basename "$f")
+           mv "$f" "$DEST/${base//owncloud-client/$EXECUTABLE}" ;;
     esac
 done
 
