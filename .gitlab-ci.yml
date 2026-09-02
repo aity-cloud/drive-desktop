@@ -179,6 +179,20 @@ build:windows:
       Write-Host "git-bash resolved to: $env:AITY_BASH"
       if (-not (Test-Path $env:AITY_BASH)) { throw "still no bash.exe at $env:AITY_BASH after choco install" }
       & $env:AITY_BASH --version | Out-Host
+    # Craft treats a system git >= 2.27 as its dev-utils/git and derives
+    # patch.exe/sed.exe as <that git>\..\usr\bin\* (locateGit() in the
+    # blueprint). The runner's first-on-PATH git is MinGit at C:\Git, which
+    # has NO usr\bin\patch.exe - kshimgen died on exactly that (job
+    # 16251680056). Put full Git for Windows first so Craft derives from an
+    # install that really has the tools, and prove they are there now
+    # rather than 9 minutes into the bootstrap.
+    - |
+      $gitfull = Split-Path (Split-Path $env:AITY_BASH)
+      foreach ($tool in @("patch.exe", "sed.exe")) {
+        if (-not (Test-Path "$gitfull\usr\bin\$tool")) { throw "$gitfull\usr\bin\$tool missing - Craft's git-derived tools will fail" }
+      }
+      $env:PATH = "$gitfull\cmd;$env:PATH"
+      Write-Host "PATH now prefers: $gitfull\cmd ($(& git --version))"
     - '& $env:AITY_BASH scripts/materialize.sh $env:WIN_ENV'
     - git clone --depth=1 https://invent.kde.org/kde/craftmaster.git "$env:USERPROFILE/craft/CraftMaster/CraftMaster"
     - $env:AITY_MATERIALIZED = "$env:CI_PROJECT_DIR/build/materialized/$env:WIN_ENV" -replace '\\','/'
