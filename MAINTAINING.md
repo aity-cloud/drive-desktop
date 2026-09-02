@@ -90,6 +90,49 @@ refresh, and oCIS accepts the token; removed from `KNOWN_BLOCKED` in meta's
 empty body and `Server: istio-envoy` on the auth endpoint is the WAF, while
 Keycloak answers a 400 to a bad-but-reachable redirect.
 
+## The upstream theme brands the login screen and nothing else (2026-09-02)
+
+Raul's first installable build was branded ONLY on the wizard/login screen;
+the rest of the app kept ownCloud's blue, the wizard opened on a server-URL
+page despite the URL being preset, and signing in downloaded every space.
+The `Theme` subclass has no hook for any of these - they are the first
+patch (`patches/0001-*`, PATCHES.md). Facts that cost time to find, kept
+here so a Bump can re-verify fast:
+
+- **All in-app icons are tinted by ONE hardcoded literal pair** in
+  `Resources::getCoreIcon` (`#435671` light / `#ADACAB` dark), used by the
+  toolbar, connection-state dots, folder-status icons and the default space
+  image. It is not a `Theme` value. The patch swaps it for the aity-ds
+  neutrals; if a Bump makes it themable, drop that hunk.
+- **The selection/highlight color comes from the platform style, not the
+  theme.** The blue selected-account tab and list selections are
+  `QPalette::Highlight`. The patch sets it app-wide in `main.cpp` from
+  `wizardHeaderBackgroundColor()`. `avatarColor()`/`avatarColorChecked()`
+  ARE real `Theme` hooks (overlay, no patch) - the checked avatar sits on
+  the new red highlight, so it is white.
+- **`SYNC_ALL` is upstream's default whenever no VFS plugin exists**, and
+  this Pin ships a VFS plugin for Windows ONLY (`src/plugins/vfs/{win,off}`,
+  no linux/mac). So on Linux/macOS "sign in" meant "download everything".
+  The patch makes the no-VFS default `SELECTIVE_SYNC` (picker opens, nothing
+  downloads until chosen); Windows keeps `USE_VFS`. There is no Linux/mac
+  virtual-files option to select at this Pin - that is upstream, not the
+  overlay.
+- **A preset+locked server URL still shows the URL page.** The patch queues
+  one `QWizard::next()` in the controller ctor when
+  `AppConfig::serverUrl()` is set and `allowServerUrlChange()` is false, so
+  the wizard opens on the sign-in step and the browser launches at once. The
+  URL page's own validation is what runs, so a network failure still shows
+  it with the error.
+
+Verifying the GUI headlessly: run the AppImage under `xvfb-run -s "-screen 0
+1280x900x24"` and `xwd -root -out x.xwd` (Chromium device emulation cannot
+show any of this, and WebKit will not launch here). For the logged-in
+window, seed an account with `scripts/smoke-sync.py seed` first and pass
+`--show`. There is no `xdotool` on the dev box, so the Advanced page's
+default radio cannot be clicked to for a screenshot - read the built default
+in `build/materialized/<env>/src/gui/newaccountwizard/advancedsettingspagecontroller.cpp`
+instead.
+
 ## Traps
 
 - **`registry.aity.tech/catalog` is a curated mirror, not a Docker Hub
