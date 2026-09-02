@@ -1,0 +1,91 @@
+diff --git a/src/gui/main.cpp b/src/gui/main.cpp
+index b0c6ca1..61dcee1 100644
+--- a/src/gui/main.cpp
++++ b/src/gui/main.cpp
+@@ -36,9 +36,11 @@
+ #endif
+ 
+ #include <QApplication>
++#include <QColor>
+ #include <QCommandLineParser>
+ #include <QLibraryInfo>
+ #include <QMessageBox>
++#include <QPalette>
+ #include <QProcess>
+ #include <QTimer>
+ #include <QTranslator>
+@@ -371,6 +373,17 @@ int main(int argc, char **argv)
+         app.setWindowIcon(Theme::instance()->applicationIcon());
+         app.setApplicationVersion(Theme::instance()->versionSwitchOutput());
+ 
++        // A branded theme colors the selection/highlight surfaces (account
++        // switcher, list selections) from its wizard colors instead of
++        // inheriting the platform style's blue.
++        if (const QColor accent = Theme::instance()->wizardHeaderBackgroundColor(); accent.isValid()) {
++            QPalette palette = app.palette();
++            palette.setColor(QPalette::Highlight, accent);
++            const QColor accentText = Theme::instance()->wizardHeaderTitleColor();
++            palette.setColor(QPalette::HighlightedText, accentText.isValid() ? accentText : QColor(Qt::white));
++            app.setPalette(palette);
++        }
++
+ #ifdef Q_OS_LINUX
+         // HACK:
+         // With X11 arg0.name is used to map WM_CLASS to the desktop file.
+diff --git a/src/gui/newaccountwizard/advancedsettingspagecontroller.cpp b/src/gui/newaccountwizard/advancedsettingspagecontroller.cpp
+index 9d80432..260a404 100644
+--- a/src/gui/newaccountwizard/advancedsettingspagecontroller.cpp
++++ b/src/gui/newaccountwizard/advancedsettingspagecontroller.cpp
+@@ -170,7 +170,9 @@ void AdvancedSettingsPageController::gatherSyncInfo()
+     _vfsIsAvailable = VfsPluginManager::instance().bestAvailableVfsMode() == Vfs::WindowsCfApi;
+     _forceVfs = _vfsIsAvailable && Theme::instance()->forceVirtualFilesOption();
+     if (!_vfsIsAvailable)
+-        _defaultSyncType = NewAccount::SyncType::SYNC_ALL;
++        // Without virtual files the only alternative to downloading every
++        // space in full is letting the user pick, so picking is the default.
++        _defaultSyncType = NewAccount::SyncType::SELECTIVE_SYNC;
+     else
+         _defaultSyncType = NewAccount::SyncType::USE_VFS;
+ 
+diff --git a/src/gui/newaccountwizard/newaccountwizardcontroller.cpp b/src/gui/newaccountwizard/newaccountwizardcontroller.cpp
+index ec8a486..e55dbbe 100644
+--- a/src/gui/newaccountwizard/newaccountwizardcontroller.cpp
++++ b/src/gui/newaccountwizard/newaccountwizardcontroller.cpp
+@@ -17,6 +17,7 @@
+ #include "accessmanager.h"
+ #include "advancedsettingspagecontroller.h"
+ #include "authsuccesspagecontroller.h"
++#include "config/appconfig.h"
+ #include "common/utility.h"
+ #include "newaccountmodel.h"
+ #include "newaccountwizard.h"
+@@ -40,6 +41,16 @@ NewAccountWizardController::NewAccountWizardController(NewAccountModel *model, N
+     buildPages();
+     buildButtonLayouts();
+     connectWizard();
++
++    // When the theme presets the server URL and forbids changing it, the URL
++    // page has nothing to ask: advance to the sign-in step as soon as the
++    // wizard shows. next() runs the page's own validation, which is what
++    // performs the server checks and then opens the browser; if that
++    // validation fails the URL page stays visible with the error.
++    AppConfig appConfig;
++    if (!appConfig.serverUrl().isEmpty() && !appConfig.allowServerUrlChange()) {
++        QMetaObject::invokeMethod(_wizard, &QWizard::next, Qt::QueuedConnection);
++    }
+ }
+ 
+ void NewAccountWizardController::setupWizard()
+diff --git a/src/resources/resources.cpp b/src/resources/resources.cpp
+index c25b82f..c6892f2 100644
+--- a/src/resources/resources.cpp
++++ b/src/resources/resources.cpp
+@@ -118,7 +118,7 @@ QIcon OCC::Resources::getCoreIcon(const QString &iconName)
+     if (cached.isNull()) {
+         const QString iconPath = QStringLiteral(":/client/resources/core/%1.svg").arg(iconName);
+         Q_ASSERT(QFileInfo::exists(iconPath));
+-        const QString color = isUsingDarkTheme() ? QStringLiteral("#ADACAB") : QStringLiteral("#435671");
++        const QString color = isUsingDarkTheme() ? QStringLiteral("#99a0af") : QStringLiteral("#4b5160");
+         QByteArray data = Template::renderTemplateFromFile(iconPath, {{QStringLiteral("color"), color}}).toUtf8();
+         QBuffer buffer(&data);
+         QImageReader iconReader(&buffer, "svg");

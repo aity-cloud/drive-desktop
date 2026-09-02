@@ -89,6 +89,19 @@ public:
     {
         return Resources::themeUniversalIcon(QStringLiteral("wizard_logo"));
     }
+
+    // Account avatar placeholders: neutral slate from the aity-ds palette
+    // instead of upstream's gradient; the checked one sits on the brand-red
+    // highlight (QPalette::Highlight, set at startup), so it goes white.
+    QColor avatarColor() const override
+    {
+        return QColor(0xe0, 0xe3, 0xea); // slate-200
+    }
+
+    QColor avatarColorChecked() const override
+    {
+        return QColor(0xff, 0xff, 0xff);
+    }
 };
 
 } // namespace OCC

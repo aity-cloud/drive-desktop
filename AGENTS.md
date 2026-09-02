@@ -19,7 +19,9 @@ dashes) applies here unchanged. Vocabulary: `../meta/CONTEXT.md`. Spec:
 - Branding beats patching: anything expressible in `overlay/` (OEM.cmake
   variables, the Theme subclass, theme assets) must be done there. A patch
   in `patches/` needs a "not shippable without it" justification and an
-  entry in `PATCHES.md`. The current patch count is zero; keep it there.
+  entry in `PATCHES.md`. Current count: 1 (product behavior the upstream
+  theme has no hooks for - see PATCHES.md); keep it minimal and drop
+  hunks a Bump makes redundant.
 - Icons and wizard logos under `overlay/*/theme/` are GENERATED from
   `../meta/brand/logo.svg` by `scripts/gen-icons.sh`. Regenerate, never
   hand-edit the PNGs/SVGs.
