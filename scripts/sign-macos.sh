@@ -177,10 +177,24 @@ if [ "$PREFLIGHT" -eq 1 ]; then
 fi
 
 echo "sign-macos: fetching the Developer ID certificate from the match store"
-$FASTLANE developer_id_certificate
+# match is readonly forever (only the Account Holder can create this
+# certificate, and not from a runner), so an empty store is not an error we
+# can retry out of - it crashes with "No code signing identity found and
+# cannot create a new one because you enabled readonly". Treat it the same
+# as absent credentials: say so LOUDLY and leave the artifact unsigned,
+# rather than failing a job whose build is otherwise good. Unsigned is an
+# acceptable test build; a failed job that hides a usable DMG is not.
+if ! $FASTLANE developer_id_certificate || [ -z "$(find_developer_id)" ]; then
+  echo "sign-macos: NO Developer ID Application certificate is available - neither in the"
+  echo "sign-macos: keychain nor in the match store, and only the Apple account HOLDER can"
+  echo "sign-macos: create one (Xcode > Settings > Accounts > Manage Certificates > + >"
+  echo "sign-macos: Developer ID Application, or: bundle exec fastlane developer_id_certificate_bootstrap)."
+  echo "sign-macos: the artifacts in $DIST are UNSIGNED and UNNOTARISED. Gatekeeper will"
+  echo "sign-macos: refuse to open them on any other Mac until that certificate exists."
+  exit 0
+fi
 
 IDENTITY="$(find_developer_id)"
-[ -n "$IDENTITY" ] || { echo "sign-macos: still no Developer ID Application identity after match"; exit 1; }
 
 fi   # NEED_MATCH
 

@@ -333,7 +333,17 @@ build:macos:
     # signed as if this pipeline had produced it - a stale artifact that
     # looks entirely legitimate is worse than a failed job.
     - rm -rf "$HOME/craft/binaries" && mkdir -p "$HOME/craft/binaries"
-    - scripts/craft.sh -c --no-cache owncloud/owncloud-client
+    # Craft's install DB survives on this runner too, so a client already
+    # merged by an EARLIER JOB makes `craft owncloud-client` print "is up to
+    # date, nothing to do" and package the OLD binaries under the new
+    # version's name. That is what happened on the first v7.1.1 run (job
+    # 16301720407 built nothing in 20s and produced a DMG labelled 7.1.1.37
+    # containing 7.1.0 code). Same trap build:appimage hits between its two
+    # Environment legs, so the same two resets: wipe the blueprint build dir
+    # (its CMake cache pins OEM_THEME_DIR and the source dir) and pass -i.
+    - BUILD_DIR=$(scripts/craft.sh -c --get buildDir -q owncloud-client | tail -n1)
+    - echo "wiping $BUILD_DIR" && rm -rf "$BUILD_DIR"
+    - scripts/craft.sh -c --no-cache -i owncloud/owncloud-client
     - scripts/craft.sh -c --no-cache --package owncloud/owncloud-client
     # Same collector as the AppImage job: it renames Craft's blueprint-named
     # output (owncloud-client-HEAD-<n>-macos-clang-arm64.dmg) to the shape we

@@ -340,6 +340,34 @@ source, so it is the Craft blueprint or ECM doing the `.icns` assembly.
 UNVERIFIED and macOS-only: confirm the sidebar icon on the built `.app`
 once the link succeeds, rather than theorising about it now.
 
+## macOS shipped a DMG labelled 7.1.1 that contained 7.1.0 code (2026-09-04)
+
+The first `build:macos` at the new Pin "built" the client in 20 seconds and
+produced `aity-drive-7.1.1.37-macos-arm64.dmg`. It was 7.1.0 inside. The
+only honest line in the log is easy to read past:
+
+    *** owncloud/owncloud-client is up to date, nothing to do ***
+
+This is the SAME trap the AppImage job already documents between its two
+Environment legs, arriving by a different door: Craft's install DB lives in
+`$HOME`, which SURVIVES between jobs on this shell runner, so a client
+merged by an EARLIER JOB counts as installed no matter what the Pin, the
+srcDir or the Environment now say. `--package` then archives whatever is
+installed. Nothing warns, and every downstream name comes from the
+materialised tree's `VERSION.cmake`, so the artifact, its checksum and the
+version in its filename are all confidently wrong TOGETHER.
+
+Fixed with the two resets build:appimage already uses: wipe the blueprint
+build dir (`craft --get buildDir`) and pass `-i` (`--ignore-installed`) to
+the build. Both are load-bearing - `-i` alone leaves a CMake cache pinning
+`OEM_THEME_DIR` and the old source dir.
+
+**Read a suspiciously fast macOS build as a bug, not as luck.** A real one
+compiles 425 objects and takes minutes; anything near instant means Craft
+skipped the work and the DMG is a lie. The same reasoning applies to any
+future platform whose runner keeps `$HOME` between jobs; the SaaS Windows
+VMs and the AppImage container are fresh each run and cannot hit it.
+
 ## The macos runner is a SHELL executor: nothing may assume a clean machine
 
 GitLab wipes the PROJECT directory between jobs and nothing else. `$HOME` on
@@ -537,6 +565,28 @@ Application) puts it in the login keychain, where the runner will find it
 immediately. `developer_id_certificate_bootstrap` does the same AND pushes it
 to the match store, which is what a second machine or a different runner
 would need later.
+
+### An empty match store must not fail the build (2026-09-04)
+
+With no certificate in the keychain the script fell through to match, match
+is `readonly: true` permanently and the store is empty, so fastlane crashed
+the job:
+
+    [!] No code signing identity found and cannot create a new one
+        because you enabled `readonly`
+
+There is no retry out of that: only the Account Holder can create the
+certificate, and not from a runner. So this is now the same outcome as
+absent credentials - say LOUDLY that the artifact is unsigned and
+unnotarised, and exit 0. The build itself was fine; failing the job only
+hid a usable DMG behind a red pipeline. The rule the script still keeps is
+"never a QUIETLY unsigned artifact", not "never an unsigned artifact".
+
+Unlike Windows signing (deferred on cost, see the Windows section), macOS
+signing costs nothing extra - the Apple account is already paid for. It is
+blocked purely on a two-minute human step at the Mac, and it matters more
+than on Windows: Gatekeeper REFUSES an unsigned, unnotarised download on
+another Mac, where SmartScreen only warns.
 
 ## Windows: the first green run (2026-09-02, job 16253630690)
 
