@@ -591,10 +591,26 @@ for a first Craft run on a new platform. What the SaaS runner
 
 Still open after the green run:
 
-- **Signing**: `sign:windows` stays a no-op until Raul finishes Azure
-  Artifact Signing identity validation and the `AZURE_*` variables exist
-  (runbook `../meta/docs/runbooks/publisher-accounts.md` section 4). The
-  Jsign-on-Linux shape is unchanged.
+- **Signing: DEFERRED on purpose (decision 2026-09-04), not pending.** No
+  Azure Artifact Signing subscription is being bought yet; revisit at
+  roughly 5-10k users. `sign:windows` stays the loud no-op and the
+  Jsign-on-Linux shape is unchanged, so arming it later is only the
+  `AZURE_*` variables plus the implementation (runbook
+  `../meta/docs/runbooks/publisher-accounts.md` section 4).
+
+  What we accept until then, so nobody re-argues it: an unsigned installer
+  shows the SmartScreen "Windows protected your PC" wall (More info ->
+  Run anyway) and Edge flags the download, and enterprise AppLocker/WDAC
+  policies that block unsigned executables will refuse it outright with no
+  click-through. Fine for staff and pilot testing, NOT fine for a public
+  promote - the first customer-facing Windows release is the real gate.
+
+  Why the price is what it is: since the 2023 CA/Browser rules an OV
+  certificate needs its key on an HSM or hardware token (300-500 USD/year
+  plus a token that does not fit CI), so Azure Trusted Signing at ~10
+  USD/month is the cheapest way to sign as Aity. SignPath Foundation is
+  free but signs OSS as "SignPath Foundation", which is the wrong
+  publisher on our own product.
 - **Real-hardware testing**: the .exe installer has never been executed on
   a real Windows machine - install, login against staging, sync, uninstall
   are all unproven. Needs a human with a Windows box (or the Harvester
