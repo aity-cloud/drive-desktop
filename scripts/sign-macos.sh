@@ -43,7 +43,13 @@ PREFLIGHT=0; ONE=""
 case "${1:-}" in
   --preflight) PREFLIGHT=1; shift ;;
   --sign) ONE="${2:?usage: sign-macos.sh --sign <file.app|file.dmg>}"; shift 2
-          [ -e "$ONE" ] || { echo "sign-macos: no such path: $ONE"; exit 1; } ;;
+          [ -e "$ONE" ] || { echo "sign-macos: no such path: $ONE"; exit 1; }
+          # Craft buffers this command's output and did not show it when the
+          # DMG leg failed (2026-09-11), so keep our own trace; the job prints
+          # it when --package fails.
+          SIGN_LOG="${CI_PROJECT_DIR:-/tmp}/sign-macos.log"
+          exec > >(tee -a "$SIGN_LOG") 2>&1
+          set -x ;;
 esac
 
 DIST="${1:-}"
@@ -242,7 +248,8 @@ notarise_dmg() {
   local out id
   out="$(xcrun notarytool submit "$pkg" \
     --key "$ASC_KEY_P8" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID" \
-    --wait --timeout 30m 2>&1 | tee /dev/stderr)"
+    --wait --timeout 30m 2>&1)" || true
+  printf '%s\n' "$out"
   id="$(printf '%s\n' "$out" | awk '/^ *id: /{print $2; exit}')"
 
   # notarytool exits 0 on a completed submission whatever the verdict, so the
