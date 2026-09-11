@@ -276,6 +276,12 @@ build:macos:
   # Everything else in this pipeline is cheap and disposable, so the default
   # stays as it is.
   interruptible: false
+  # One Craft state per Mac: $HOME/craft holds the prefix, the blueprint
+  # settings (srcDir!) and the package output, none of it per-job. The Mac
+  # carries two runner registrations, so without this GitLab happily runs
+  # two of these at once and they overwrite each other's srcDir mid-build
+  # (2026-09-11, first release tag: production tripped over staging's tree).
+  resource_group: macos-craft
   rules:
     - when: manual
       allow_failure: true
