@@ -6,7 +6,7 @@
 # (meta/specs/aity-drive-v1.md, identity table); the icon set carries the
 # visible STG badge.
 
-set(APPLICATION_NAME       "Aity Drive (staging)")
+set(APPLICATION_NAME       "Aity Drive Staging")
 set(APPLICATION_SHORTNAME  "aitydrive-staging")
 # macOS names the bundle after the executable and Finder shows the bundle
 # name, so the executable IS the display name there (upstream ships
