@@ -15,17 +15,22 @@
 # With any of them missing the script prints why and exits 0: an unsigned
 # build stays a useful artifact, it just cannot be handed to anyone.
 #
-# Usage: scripts/sign-macos.sh <dist-dir>       sign+notarise+staple every DMG in it
-#        scripts/sign-macos.sh --dmg <file.dmg>  one DMG (Craft calls this during --package)
+# Usage: scripts/sign-macos.sh <dist-dir>     notarise+staple every DMG in it
+#        scripts/sign-macos.sh --sign <path>   Craft calls this during --package,
+#                                             once with the .app, once with the .dmg
 #        scripts/sign-macos.sh --preflight
 #
-# The .app INSIDE the DMG is signed by Craft itself, not here:
-# ci/craft-override.ini turns on CodeSigning for the macOS target, and Craft
-# then signs every binary and nested bundle with Developer ID, hardened
-# runtime and a timestamp before it builds the DMG. This script only ever
-# touches the container. The first notarisation attempt (2026-09-11) was
-# rejected as Invalid precisely because the container was Developer ID
-# signed while everything inside it still carried Craft's ad-hoc `--sign -`.
+# Craft's CodeSigning/MacCustomSignCommand (ci/craft-override.ini, macOS
+# target only) routes BOTH of Craft's signing points here: the .app after
+# bundling and the .dmg after create-dmg. It has to be both, because Craft's
+# own package signer ends with `spctl -a -t open`, which rejects any Developer
+# ID DMG that is not notarised yet - so without a custom command the package
+# step can only succeed when Craft notarises itself, and that path wants an
+# Apple ID plus app-specific password rather than the API key we have.
+#
+# The first notarisation attempt (2026-09-11) came back Invalid because only
+# the DMG container was Developer ID signed while everything inside it still
+# carried Craft's ad-hoc `--sign -`. The notary service checks every Mach-O.
 #
 # --preflight does the credential check and resolves fastlane, then stops.
 # The job runs it BEFORE the build: signing is the last step of a job whose
@@ -34,16 +39,16 @@
 # checks is cheap and none of it depends on build output.
 set -euo pipefail
 
-PREFLIGHT=0; ONE_DMG=""
+PREFLIGHT=0; ONE=""
 case "${1:-}" in
   --preflight) PREFLIGHT=1; shift ;;
-  --dmg) ONE_DMG="${2:?usage: sign-macos.sh --dmg <file.dmg>}"; shift 2
-         [ -f "$ONE_DMG" ] || { echo "sign-macos: no such file: $ONE_DMG"; exit 1; } ;;
+  --sign) ONE="${2:?usage: sign-macos.sh --sign <file.app|file.dmg>}"; shift 2
+          [ -e "$ONE" ] || { echo "sign-macos: no such path: $ONE"; exit 1; } ;;
 esac
 
 DIST="${1:-}"
-if [ "$PREFLIGHT" -eq 0 ] && [ -z "$ONE_DMG" ]; then
-  : "${DIST:?usage: sign-macos.sh <dist-dir> | --dmg <file> | --preflight}"
+if [ "$PREFLIGHT" -eq 0 ] && [ -z "$ONE" ]; then
+  : "${DIST:?usage: sign-macos.sh <dist-dir> | --sign <path> | --preflight}"
   [ -d "$DIST" ] || { echo "sign-macos: no such directory: $DIST"; exit 1; }
 fi
 
@@ -116,7 +121,7 @@ if [ -n "$missing" ]; then
   if [ "$PREFLIGHT" -eq 1 ]; then
     echo "sign-macos: preflight - the build will produce UNSIGNED artifacts, which is fine for a test build."
   else
-    echo "sign-macos: ${ONE_DMG:-the artifacts in $DIST} UNSIGNED; macOS will refuse to open them on another machine."
+    echo "sign-macos: ${ONE:-the artifacts in $DIST} UNSIGNED; macOS will refuse to open them on another machine."
   fi
   exit 0
 fi
@@ -213,6 +218,17 @@ fi   # NEED_MATCH
 
 echo "sign-macos: signing with: $IDENTITY"
 
+# ponytail: --deep signs the nested frameworks, plugins and helpers inside
+# out in one call. Craft does a per-binary pass first; if the notary log ever
+# names a file --deep missed, add that pass here.
+sign_app() {
+  local app="$1"
+  codesign --force --deep --options runtime --timestamp \
+    --preserve-metadata=identifier,entitlements --sign "$IDENTITY" "$app"
+  codesign --verify --deep --strict --verbose=2 "$app"
+  echo "sign-macos: $(basename "$app") signed with Developer ID and the hardened runtime"
+}
+
 notarise_dmg() {
   local pkg="$1"
   if xcrun stapler validate "$pkg" >/dev/null 2>&1; then
@@ -244,8 +260,12 @@ notarise_dmg() {
   echo "sign-macos: $(basename "$pkg") is signed, notarised and stapled"
 }
 
-if [ -n "$ONE_DMG" ]; then
-  notarise_dmg "$ONE_DMG"
+if [ -n "$ONE" ]; then
+  case "$ONE" in
+    *.app) sign_app "$ONE" ;;
+    *.dmg) notarise_dmg "$ONE" ;;
+    *) echo "sign-macos: do not know how to sign $ONE"; exit 1 ;;
+  esac
 else
   shopt -s nullglob
   for pkg in "$DIST"/*.dmg; do notarise_dmg "$pkg"; done
