@@ -224,13 +224,20 @@ fi   # NEED_MATCH
 
 echo "sign-macos: signing with: $IDENTITY"
 
-# ponytail: --deep signs the nested frameworks, plugins and helpers inside
-# out in one call. Craft does a per-binary pass first; if the notary log ever
-# names a file --deep missed, add that pass here.
 sign_app() {
-  local app="$1"
-  codesign --force --deep --options runtime --timestamp \
-    --preserve-metadata=identifier,entitlements --sign "$IDENTITY" "$app"
+  local app="$1" main
+  main="$app/Contents/MacOS/$(basename "$app" .app)"
+  local flags=(--force --options runtime --timestamp \
+               --preserve-metadata=identifier,entitlements --sign "$IDENTITY")
+  # --deep never descends into Contents/Resources, and Qt's QML plugins live
+  # there - the notary service named three of them (2026-09-11). Every loose
+  # Mach-O is signed first; nested bundles and the main executable are left to
+  # --deep, which signs them as bundles with the right identifiers.
+  find "$app" -type f ! -path "$main" \
+       ! -path '*.framework/*' ! -path '*.appex/*' ! -path '*.xpc/*' -print0 \
+    | xargs -0 file | awk -F': ' '$2 ~ /Mach-O/ {print $1}' \
+    | tr '\n' '\0' | xargs -0 -n 50 codesign "${flags[@]}"
+  codesign "${flags[@]}" --deep "$app"
   codesign --verify --deep --strict --verbose=2 "$app"
   echo "sign-macos: $(basename "$app") signed with Developer ID and the hardened runtime"
 }
