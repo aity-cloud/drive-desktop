@@ -15,8 +15,17 @@
 # With any of them missing the script prints why and exits 0: an unsigned
 # build stays a useful artifact, it just cannot be handed to anyone.
 #
-# Usage: scripts/sign-macos.sh <dist-dir>
+# Usage: scripts/sign-macos.sh <dist-dir>       sign+notarise+staple every DMG in it
+#        scripts/sign-macos.sh --dmg <file.dmg>  one DMG (Craft calls this during --package)
 #        scripts/sign-macos.sh --preflight
+#
+# The .app INSIDE the DMG is signed by Craft itself, not here:
+# ci/craft-override.ini turns on CodeSigning for the macOS target, and Craft
+# then signs every binary and nested bundle with Developer ID, hardened
+# runtime and a timestamp before it builds the DMG. This script only ever
+# touches the container. The first notarisation attempt (2026-09-11) was
+# rejected as Invalid precisely because the container was Developer ID
+# signed while everything inside it still carried Craft's ad-hoc `--sign -`.
 #
 # --preflight does the credential check and resolves fastlane, then stops.
 # The job runs it BEFORE the build: signing is the last step of a job whose
@@ -25,12 +34,16 @@
 # checks is cheap and none of it depends on build output.
 set -euo pipefail
 
-PREFLIGHT=0
-if [ "${1:-}" = "--preflight" ]; then PREFLIGHT=1; shift; fi
+PREFLIGHT=0; ONE_DMG=""
+case "${1:-}" in
+  --preflight) PREFLIGHT=1; shift ;;
+  --dmg) ONE_DMG="${2:?usage: sign-macos.sh --dmg <file.dmg>}"; shift 2
+         [ -f "$ONE_DMG" ] || { echo "sign-macos: no such file: $ONE_DMG"; exit 1; } ;;
+esac
 
 DIST="${1:-}"
-if [ "$PREFLIGHT" -eq 0 ]; then
-  : "${DIST:?usage: sign-macos.sh <dist-dir> | sign-macos.sh --preflight}"
+if [ "$PREFLIGHT" -eq 0 ] && [ -z "$ONE_DMG" ]; then
+  : "${DIST:?usage: sign-macos.sh <dist-dir> | --dmg <file> | --preflight}"
   [ -d "$DIST" ] || { echo "sign-macos: no such directory: $DIST"; exit 1; }
 fi
 
@@ -103,7 +116,7 @@ if [ -n "$missing" ]; then
   if [ "$PREFLIGHT" -eq 1 ]; then
     echo "sign-macos: preflight - the build will produce UNSIGNED artifacts, which is fine for a test build."
   else
-    echo "sign-macos: the artifacts in $DIST are UNSIGNED; macOS will refuse to open them on another machine."
+    echo "sign-macos: ${ONE_DMG:-the artifacts in $DIST} UNSIGNED; macOS will refuse to open them on another machine."
   fi
   exit 0
 fi
@@ -199,42 +212,43 @@ IDENTITY="$(find_developer_id)"
 fi   # NEED_MATCH
 
 echo "sign-macos: signing with: $IDENTITY"
-# codesign needs the PRIVATE KEY, and macOS will ask permission the first time
-# a process that is not Xcode uses it. A LaunchAgent runner cannot answer that
-# prompt if nobody is looking, and a Deny fails the job here rather than
-# anywhere informative - allow it once, for this keychain, and it stops
-# asking.
 
-shopt -s nullglob
-apps=("$DIST"/*.app)
-if [ ${#apps[@]} -eq 0 ]; then
-  # Craft packages a .dmg or .pkg; mount-free approach: sign what is inside
-  # the payload only when an .app is present, otherwise sign the package.
-  echo "sign-macos: no .app in $DIST - signing packages directly"
-fi
+notarise_dmg() {
+  local pkg="$1"
+  if xcrun stapler validate "$pkg" >/dev/null 2>&1; then
+    echo "sign-macos: $(basename "$pkg") already notarised and stapled - nothing to do"
+    return 0
+  fi
 
-for app in "${apps[@]}"; do
-  # --options runtime is mandatory: the notary service rejects anything
-  # without the hardened runtime.
-  codesign --force --deep --timestamp --options runtime \
-    --sign "$IDENTITY" "$app"
-  codesign --verify --deep --strict --verbose=2 "$app"
-done
-
-for pkg in "$DIST"/*.dmg "$DIST"/*.pkg; do
-  [ -e "$pkg" ] || continue
-  codesign --force --timestamp --sign "$IDENTITY" "$pkg" || true
+  codesign --force --timestamp --sign "$IDENTITY" "$pkg"
 
   echo "sign-macos: notarising $(basename "$pkg")"
-  xcrun notarytool submit "$pkg" \
+  local out id
+  out="$(xcrun notarytool submit "$pkg" \
     --key "$ASC_KEY_P8" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID" \
-    --wait --timeout 30m
+    --wait --timeout 30m 2>&1 | tee /dev/stderr)"
+  id="$(printf '%s\n' "$out" | awk '/^ *id: /{print $2; exit}')"
 
-  # Stapling lets the artifact validate offline; a zip cannot be stapled,
-  # only the .dmg/.pkg itself.
+  # notarytool exits 0 on a completed submission whatever the verdict, so the
+  # status line is the only signal. On anything but Accepted the developer
+  # log names every offending file and reason - print it, then fail.
+  if ! printf '%s\n' "$out" | grep -qE '^ *status: Accepted'; then
+    echo "sign-macos: notarisation of $(basename "$pkg") was NOT accepted; developer log:"
+    [ -n "$id" ] && xcrun notarytool log "$id" \
+      --key "$ASC_KEY_P8" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID" || true
+    return 1
+  fi
+
   xcrun stapler staple "$pkg"
   xcrun stapler validate "$pkg"
   echo "sign-macos: $(basename "$pkg") is signed, notarised and stapled"
-done
+}
+
+if [ -n "$ONE_DMG" ]; then
+  notarise_dmg "$ONE_DMG"
+else
+  shopt -s nullglob
+  for pkg in "$DIST"/*.dmg; do notarise_dmg "$pkg"; done
+fi
 
 echo "sign-macos: done"
