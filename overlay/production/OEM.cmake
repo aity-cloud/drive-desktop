@@ -6,7 +6,15 @@
 
 set(APPLICATION_NAME       "Aity Drive")
 set(APPLICATION_SHORTNAME  "aitydrive")
-set(APPLICATION_EXECUTABLE "aity-drive")
+# macOS names the bundle after the executable and Finder shows the bundle
+# name, so the executable IS the display name there (upstream ships
+# "owncloud.app" for the same reason). Everything else keeps the CLI-safe
+# name.
+if(APPLE)
+  set(APPLICATION_EXECUTABLE "${APPLICATION_NAME}")
+else()
+  set(APPLICATION_EXECUTABLE "aity-drive")
+endif()
 set(APPLICATION_DOMAIN     "aity.tech")
 set(APPLICATION_VENDOR     "AITY CLOUD SRL")
 # Distinct from the iOS app's id (tech.aity.drive): they are
