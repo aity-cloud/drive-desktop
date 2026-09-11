@@ -677,3 +677,43 @@ Still open after the green run:
   play `build:windows` inside it - pipeline variables outrank yml job
   variables. Verify from the trace (`materialize: staging tree ready`)
   within the first minutes, not from the play response.
+
+## macOS signing and notarisation, the working shape (2026-09-11)
+
+First notarised build: `aity-drive-7.1.1.43-macos-arm64.dmg`, job
+16443227040, Apple verdict Accepted, stapled, opened on Raul's Mac with no
+Gatekeeper dialog. What it took, in the order the failures appeared:
+
+1. **Only the Account Holder can create a Developer ID certificate**, and an
+   App Store Connect API key is never the Account Holder. CI cannot mint it;
+   `match` is readonly for good. Raul created it in Xcode after the account
+   became an organisation, and `sign-macos.sh` finds it in the login
+   keychain. An `Apple Distribution` certificate (the iOS one) is NOT a
+   substitute - the notary service rejects it.
+2. **Signing the DMG alone is worthless.** The notary service checks every
+   Mach-O inside. Craft's `CodeSigning/Enabled` does the bundle signing
+   properly, so it is on for the macOS target in `ci/craft-override.ini`.
+3. **`MacCustomSignCommand` is called for BOTH the `.app` and the `.dmg`**,
+   and it has to be a custom command: Craft's own package signer ends with
+   `spctl -a -t open`, which rejects any Developer ID DMG that is not
+   notarised yet, and its notarisation wants Apple ID + app-specific password
+   rather than our API key. So `sign-macos.sh --sign <path>` dispatches on
+   the extension.
+4. **`codesign --deep` never descends into `Contents/Resources`**, and Qt
+   keeps its QML plugins there. Apple named three of them. Every loose Mach-O
+   is signed individually first, then `--deep` for the nested bundles.
+5. **`notarytool submit --wait` exits 0 whatever the verdict.** The script
+   greps `status: Accepted` and on anything else prints `notarytool log`,
+   which names each offending file - that log is how item 4 was found. Craft
+   also swallows the custom command's output, so the script traces itself to
+   `sign-macos.log`, printed by the job when `--package` fails.
+6. **The bundle is named after `APPLICATION_EXECUTABLE`**, so the first build
+   landed as `aity-drive.app` (upstream ships `owncloud.app`). On APPLE the
+   OEM.cmake now sets the executable to the display name, and the macOS job
+   derives `APPLICATION_EXECUTABLE`/`SHORTNAME` from the same OEM.cmake.
+
+Still open on this path: the Developer ID certificate exists only in that
+one login keychain (exported to Raul's password manager; not yet in the
+match store), Sparkle update-feed keys, and adding the macOS DMG to the
+GitHub release jobs - `publish:staging-prerelease` only knows the Linux
+artifacts today.
