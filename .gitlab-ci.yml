@@ -281,7 +281,12 @@ build:macos:
       allow_failure: true
   variables:
     CRAFT_TARGET: macos-clang-arm64
-    MAC_ENV: production
+  # Both Environment builds, always (meta/AGENTS.md). Two manual jobs,
+  # "build:macos: [staging]" and "build:macos: [production]"; the runner
+  # takes one at a time, so play them in that order and let the first finish.
+  parallel:
+    matrix:
+      - MAC_ENV: [staging, production]
   script:
     # Signing is the LAST step of a job whose build takes many minutes, so a
     # missing credential or a gem that will not load used to surface at the
@@ -477,14 +482,26 @@ sign:windows:
 publish:staging-prerelease:
   stage: publish-staging
   image: registry.aity.tech/catalog/library/alpine:3.22
-  needs: [build:appimage, smoke:appimage, package:linux]
+  needs:
+    - build:appimage
+    - smoke:appimage
+    - package:linux
+    # optional: the Mac job is manual. If it has not run yet this publishes
+    # the Linux assets alone; re-running this job after it finishes attaches
+    # the DMG to the same release (github-release.sh finds-or-creates).
+    - job: "build:macos: [staging]"
+      optional: true
   rules:
     - if: $CI_COMMIT_TAG && $GITHUB_RELEASES_TOKEN
   script:
     - apk add --no-cache bash curl jq >/dev/null
     # dist/staging/* is the AppImage (build:appimage) plus the .deb/.rpm
-    # (package:linux), both merged into this job's workspace by needs.
-    - bash scripts/github-release.sh prerelease "$CI_COMMIT_TAG" dist/staging/*
+    # (package:linux), dist/macos-staging/* the notarised DMG when the Mac
+    # job ran - all merged into this job's workspace by needs.
+    - |
+      set -- dist/staging/*
+      for f in dist/macos-staging/*; do [ -e "$f" ] && set -- "$@" "$f"; done
+      bash scripts/github-release.sh prerelease "$CI_COMMIT_TAG" "$@"
 
 # The single manual act that makes a release public (meta/CONTEXT.md
 # "Promote"): production installers, the zsync control file for AppImage
@@ -498,13 +515,24 @@ promote:
   image: docker.io/library/ubuntu:24.04
   # build:appimage + package:linux carry dist/production/* (AppImage, .deb,
   # .rpm) into this job; publish:staging-prerelease gates the order.
-  needs: [build:appimage, package:linux, publish:staging-prerelease]
+  needs:
+    - build:appimage
+    - package:linux
+    - publish:staging-prerelease
+    - job: "build:macos: [production]"
+      optional: true
   rules:
     - if: $CI_COMMIT_TAG && $GITHUB_RELEASES_TOKEN
       when: manual
       allow_failure: false
   script:
     - apt-get update -qq && apt-get install -y -qq curl jq git zsync openssh-client ca-certificates >/dev/null
+    # `optional` only lets this job run without the Mac job; it does not make
+    # a release without the DMG acceptable. Loud stop instead of a public
+    # release that silently lacks macOS.
+    - |
+      ls dist/macos-production/*.dmg >/dev/null 2>&1 || {
+        echo "no notarised macOS DMG in dist/macos-production - play 'build:macos: [production]' on this pipeline, wait for it, then retry promote"; exit 1; }
     - bash scripts/materialize.sh production
     - |
       set -eu
@@ -517,7 +545,7 @@ promote:
       zsyncmake -u "https://github.com/$REPO/releases/download/$CI_COMMIT_TAG/$APPIMAGE" \
         -o "dist/production/$APPIMAGE.zsync" "dist/production/$APPIMAGE"
       bash scripts/gen-update-feeds.sh --version "$VERSION_FULL" --tag "$CI_COMMIT_TAG" --appimage "$APPIMAGE"
-      bash scripts/github-release.sh promote "$CI_COMMIT_TAG" dist/production/*
+      bash scripts/github-release.sh promote "$CI_COMMIT_TAG" dist/production/* dist/macos-production/*
     # update feeds to the mirror's gh-pages branch. Same SSH setup as
     # mirror:github (meta/ci/mirror.yml): pinned host keys, the per-repo
     # write deploy key, CI as the only writer of the mirror.
