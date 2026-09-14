@@ -668,15 +668,17 @@ Still open after the green run:
 - ~~The staging Environment leg~~ GREEN the same day (job 16255259217,
   60 min): `dist/windows-staging/aity-drive-staging-7.1.0.33-windows-x86_64.exe`
   (+ .sha256), branded icon and renamed ride-alongs confirmed in CI.
-- **Playing the job with a variable: `glab api ... /play --field
-  'job_variables_attributes[][key]=...'` does NOT send the variable** - the
-  job runs with the yml default and nothing warns (one production build got
-  duplicated exactly this way). What works: create a pipeline with the
-  variable (`POST /projects/:id/pipeline`, JSON body
-  `{"ref":"main","variables":[{"key":"WIN_ENV","value":"staging"}]}`) and
-  play `build:windows` inside it - pipeline variables outrank yml job
-  variables. Verify from the trace (`materialize: staging tree ready`)
-  within the first minutes, not from the play response.
+- **`glab api ... /play --field 'job_variables_attributes[][key]=...'` does
+  NOT send the variable.** The job runs with the yml default and nothing
+  warns - that is how one staging request built production a second time.
+  `build:windows` no longer depends on this (2026-09-14: it is a
+  `parallel: matrix` over `WIN_ENV`, like `build:macos`, so each Environment
+  is its own manual job), but the API behaviour is unchanged for anything
+  else. To pass a variable at all, put it on the PIPELINE
+  (`POST /projects/:id/pipeline` with
+  `{"ref":"main","variables":[{"key":"...","value":"..."}]}`) - pipeline
+  variables outrank yml job variables - and confirm it took from the trace
+  within the first minutes, never from the play response.
 
 ## macOS signing and notarisation, the working shape (2026-09-11)
 
