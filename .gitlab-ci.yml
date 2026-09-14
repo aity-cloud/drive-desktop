@@ -239,6 +239,19 @@ build:windows:
     - scripts/craft.ps1 -c --set buildNumber=$env:CI_PIPELINE_IID owncloud/owncloud-client
     - scripts/craft.ps1 -c dev-utils/nsis
     - scripts/craft.ps1 -c --install-deps owncloud/owncloud-client
+    # The NSIS installer's title, Add/Remove Programs entry, Publisher and
+    # Start Menu shortcut come from the blueprint, which hardcodes ownCloud's
+    # own branding - the first installed build said "ownCloud" throughout.
+    # Craft exposes no override for those, so this makes them read the
+    # environment; the values below are OEM.cmake's. Full story in the script.
+    - '& $env:AITY_BASH scripts/craft-blueprint-branding.sh "$env:USERPROFILE/craft" $env:WIN_ENV'
+    - |
+      Get-Content build/craft-branding.env | ForEach-Object {
+        $k, $v = $_.Split('=', 2)
+        [Environment]::SetEnvironmentVariable($k, $v)
+      }
+      if (-not $env:APPLICATION_NAME -or -not $env:APPLICATION_VENDOR) { throw "build/craft-branding.env did not yield the branding" }
+      Write-Host "installer branding: '$env:APPLICATION_NAME' by '$env:APPLICATION_VENDOR'"
     - if ($env:WIN_ENV -eq "staging") { $env:APPLICATION_EXECUTABLE = "aity-drive-staging"; $env:APPLICATION_SHORTNAME = "aitydrive-staging" } else { $env:APPLICATION_EXECUTABLE = "aity-drive"; $env:APPLICATION_SHORTNAME = "aitydrive" }
     - scripts/craft.ps1 -c --no-cache owncloud/owncloud-client
     # The blueprint hardcodes the NSIS icon to <buildDir>/src/gui/owncloud.ico

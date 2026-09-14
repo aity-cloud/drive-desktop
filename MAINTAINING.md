@@ -368,6 +368,45 @@ skipped the work and the DMG is a lie. The same reasoning applies to any
 future platform whose runner keeps `$HOME` between jobs; the SaaS Windows
 VMs and the AppImage container are fresh each run and cannot hit it.
 
+## The installer wore ownCloud's name, and OEM.cmake could not reach it (2026-09-14)
+
+Raul installed the first Windows build and found ownCloud branding through
+the whole installer. It is not a leak from our overlay - Craft never asks
+CMake about any of this:
+
+- craft-core's `PackagerBase.setDefaults` derives `productname` and
+  `description` from `subinfo.displayName` / `subinfo.description`, which
+  the ownCloud blueprint sets to "ownCloud" and "ownCloud Desktop Client".
+- `createPackage` in that blueprint sets `company` to "ownCloud GmbH", and
+  `setTargets` points `webpage` at github.com/owncloud/client.
+- The NSIS template spends them where a user cannot miss them:
+  `Name` (installer window), `Caption`, the Add/Remove Programs
+  `DisplayName`, `Publisher`, `URLInfoAbout`, and the Start Menu shortcut.
+
+`APPLICATION_NAME` and friends in OEM.cmake reach the BINARY and nothing
+else. Only `appname` reads the environment (that is the blueprint's
+`_get_env_vars`), and none of these are registered Craft options, so there
+is no supported override to configure. `scripts/craft-blueprint-branding.sh`
+rewrites the four literals into environment lookups inside the Craft prefix
+- disposable, rebuilt from cache, and the same shape an upstream blueprint
+PR would take - then reads `overlay/<env>/OEM.cmake` and writes the values
+to `build/craft-branding.env` for the job to export.
+
+Env lookups rather than baked-in literals ON PURPOSE: one patched prefix has
+to serve both Environment builds, and on the Mac the prefix persists between
+jobs. Baking staging's name in would have shipped it in the production
+installer the same way the stale-install trap above ships old binaries.
+
+The script refuses to be a silent no-op - if the blueprint stops matching it
+exits non-zero rather than letting an ownCloud-branded installer through,
+which is the `mac-sdk-quirks.sh` lesson applied ahead of time. Exercised
+against the real blueprint (fresh, already-applied, drifted, missing root)
+before it ever ran in CI.
+
+Worth checking on a Bump: `subinfo.displayName`, `subinfo.description`,
+`subinfo.webpage` and `defines["company"]` are the four literals. An upstream
+PR making them env-driven (like `appname`) retires this script.
+
 ## The macos runner is a SHELL executor: nothing may assume a clean machine
 
 GitLab wipes the PROJECT directory between jobs and nothing else. `$HOME` on

@@ -3,7 +3,7 @@
 Hunk-by-hunk inventory of `patches/` (ADR 0001: a patch needs "not
 shippable without it"; every patch is re-validated on every Bump).
 
-**Current count: 1.**
+**Current count: 2.**
 
 ## 0001-preset-server-flow-and-brand-colors.patch
 
@@ -39,3 +39,24 @@ a Bump makes redundant.
   (toolbar, connection state, folder status, default space image);
   replaced with the aity-ds neutrals slate-600 `#4b5160` / slate-400
   `#99a0af`.
+
+## 0002-launcher-entry-uses-the-product-name.patch
+
+Reported from a real install (2026-09-14): on Linux the app is called
+"Aity Drive desktop" everywhere. Upstream's `owncloud.desktop.in` names the
+launcher entry `@APPLICATION_NAME@ desktop sync client`, so the brand name
+only ever appears with a suffix glued to it, and the theme has no hook for
+the template.
+
+- **`owncloud.desktop.in`** - `Name` is exactly `@APPLICATION_NAME@` and
+  `Comment` is `@APPLICATION_NAME@ sync client`. The ~50 localized `Name[xx]`
+  and `Comment[xx]` lines are deleted: a brand name is not translated, and
+  every one of them re-embedded the same "desktop sync client" phrasing in
+  its own language, so leaving them would have kept the old name for every
+  non-English desktop. `GenericName` (Folder Sync) and its translations stay
+  - that is a category, not a name. The two `[Desktop Action]` entries keep
+  their own labels ("Show ... settings", "Quit ..."), which read correctly
+  with the bare name substituted.
+
+Drop this the moment upstream parameterises the entry itself.
+

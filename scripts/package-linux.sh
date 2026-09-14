@@ -28,6 +28,12 @@ case "$ENV" in
     *) echo "package-linux: unknown environment '$ENV'" >&2; exit 2 ;;
 esac
 
+# The product name is OEM.cmake's, per Environment - it was hardcoded here and
+# every staging .deb went out describing itself as production.
+OEM="$(cd "$(dirname "$0")/.." && pwd)/overlay/$ENV/OEM.cmake"
+APP_NAME=$(sed -n 's/^set(APPLICATION_NAME  *"\([^"]*\)").*/\1/p' "$OEM" | head -n1)
+[ -n "$APP_NAME" ] || { echo "package-linux: no APPLICATION_NAME in $OEM" >&2; exit 1; }
+
 APPIMAGE=$(readlink -f "$APPIMAGE")
 [ -f "$APPIMAGE" ] || { echo "package-linux: no such file: $APPIMAGE" >&2; exit 1; }
 
@@ -78,7 +84,7 @@ common=(
     --maintainer "AITY CLOUD SRL <raul@aity.ro>"
     --url "https://aity.ro"
     --category "Utility"
-    --description "Aity Drive desktop synchronization client"
+    --description "$APP_NAME sync client"
     --force
 )
 
