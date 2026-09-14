@@ -230,6 +230,10 @@ build:windows:
       }
       $env:PATH = "$gitfull\cmd;$env:PATH"
       Write-Host "PATH now prefers: $gitfull\cmd ($(& git --version))"
+    # git-bash has its own PATH view: it resolves `python` but NOT `python3`,
+    # which killed a job 26 minutes in. Anything the repo's sh scripts need
+    # gets proven here, in seconds, not after the toolchain bootstrap.
+    - '& $env:AITY_BASH -c "command -v python3 || command -v python || { echo ''no python visible to git-bash''; exit 1; }"'
     - '& $env:AITY_BASH scripts/materialize.sh $env:WIN_ENV'
     - git clone --depth=1 https://invent.kde.org/kde/craftmaster.git "$env:USERPROFILE/craft/CraftMaster/CraftMaster"
     - $env:AITY_MATERIALIZED = "$env:CI_PROJECT_DIR/build/materialized/$env:WIN_ENV" -replace '\\','/'

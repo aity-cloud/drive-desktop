@@ -56,7 +56,13 @@ for f in "${FILES[@]}"; do
     grep -nE 'displayName|self\.description|self\.webpage|defines\["company"\]' "$f" | sed 's/^/      /'
 done
 
-python3 - "${FILES[@]}" <<'PY'
+# git-bash on the Windows runner ships `python`, not `python3` (that cost a
+# 26 minute job), while macOS and the Linux images have only `python3`.
+PYTHON=$(command -v python3 || command -v python || true)
+[ -n "$PYTHON" ] || { echo "blueprint-branding: no python3 or python on PATH" >&2; exit 1; }
+echo "blueprint-branding: using $PYTHON"
+
+"$PYTHON" - "${FILES[@]}" <<'PY'
 import sys
 
 # (literal in the blueprint, environment variable that should win)

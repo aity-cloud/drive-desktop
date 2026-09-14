@@ -403,6 +403,14 @@ which is the `mac-sdk-quirks.sh` lesson applied ahead of time. Exercised
 against the real blueprint (fresh, already-applied, drifted, missing root)
 before it ever ran in CI.
 
+**git-bash on the Windows runner resolves `python`, NOT `python3`** - the
+PowerShell side had already proven `python --version`, so the gap only
+surfaced inside a repo script, 26 minutes into a purchased-minutes job.
+The script now takes whichever exists, and the preflight asks git-bash for
+one in the first seconds. The general rule: a tool the repo's sh scripts
+need has to be proven THROUGH git-bash, not through PowerShell - the two
+have different PATH views.
+
 Worth checking on a Bump: `subinfo.displayName`, `subinfo.description`,
 `subinfo.webpage` and `defines["company"]` are the four literals. An upstream
 PR making them env-driven (like `appname`) retires this script.
