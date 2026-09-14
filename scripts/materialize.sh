@@ -76,7 +76,9 @@ cp -a "$REPO_ROOT/overlay/$ENV/." "$OUT_DIR/branding/"
 # iOS Factory does the same with debrand-strings.py). Values only; the About
 # page is Theme::about() in the OEM theme, so its upstream translations are
 # dead and left alone. Fails if any other value still carries it.
-python3 "$REPO_ROOT/scripts/debrand-translations.py" "$OUT_DIR"
+PY=$(command -v python3 || command -v python || true)
+[ -n "$PY" ] || { echo "materialize: python3 is required for scripts/debrand-translations.py - install it in this job's image" >&2; exit 1; }
+"$PY" "$REPO_ROOT/scripts/debrand-translations.py" "$OUT_DIR"
 
 # --- 4. patches (target: none) ---------------------------------------------
 shopt -s nullglob
