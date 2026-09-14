@@ -150,53 +150,90 @@ def png_as_svg(img: Image.Image) -> str:
             f'xlink:href="data:image/png;base64,{b64}"/>\n</svg>\n')
 
 
-# --- tray state icons (hand-authored geometry, recoloured per tray theme) ---
+# --- tray state icons: the mark with a small state badge, per tray flavor ---
+#
+# The first release shipped bare badges here, and the menu bar showed an "i"
+# with no product mark on it (2026-09-14). Upstream composes its cloud with a
+# glyph; this does the same with our mark. The client picks the flavor:
+# `colored` on a light menu bar, `dark` on a dark one, `black`/`white` only
+# when the user turns on monochrome icons - those two are macOS template
+# images, where only alpha counts, so their badge glyph is knocked OUT of the
+# disc rather than drawn on it.
 
-STATE_COLORS = {  # "colored" theme: estate palette
-    "ok": "#2e7d32",
-    "error": "#b80818",
-    "information": "#1565c0",
-    "offline": "#64748b",
-    "pause": "#b45309",
-    "sync": "#0e7490",
+STATE_COLORS = {  # badge disc, "colored"/"dark" flavors
+    "ok": (46, 125, 50),
+    "error": (184, 8, 24),
+    "information": (21, 101, 192),
+    "offline": (100, 116, 139),
+    "pause": (180, 83, 9),
+    "sync": (14, 116, 144),
 }
 
-GLYPHS = {  # white glyphs drawn inside a filled circle, 32x32 viewBox
-    "ok": '<path d="M9.5 16.5l4.5 4.5 8.5-9" fill="none" stroke="{fg}" '
-          'stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>',
-    "error": '<path d="M11 11l10 10M21 11l-10 10" fill="none" stroke="{fg}" '
-             'stroke-width="3.4" stroke-linecap="round"/>',
-    "information": '<circle cx="16" cy="10" r="2.1" fill="{fg}"/>'
-                   '<path d="M16 14.6v8" fill="none" stroke="{fg}" '
-                   'stroke-width="3.4" stroke-linecap="round"/>',
-    "offline": '<path d="M10 22a6 6 0 1 1 1.2-11.9 7 7 0 0 1 13.3 2A4.5 4.5 '
-               '0 0 1 23 22z" fill="none" stroke="{fg}" stroke-width="2.6"/>'
-               '<path d="M8 25L25 8" fill="none" stroke="{fg}" '
-               'stroke-width="3" stroke-linecap="round"/>',
-    "pause": '<path d="M12.5 10.5v11M19.5 10.5v11" fill="none" stroke="{fg}" '
-             'stroke-width="3.4" stroke-linecap="round"/>',
-    "sync": '<path d="M22.5 12.5a7.5 7.5 0 0 0-13-1.5M9.5 19.5a7.5 7.5 0 0 0 '
-            '13 1.5" fill="none" stroke="{fg}" stroke-width="3" '
-            'stroke-linecap="round"/>'
-            '<path d="M9 7v4.5h4.5M23 25v-4.5h-4.5" fill="none" stroke="{fg}" '
-            'stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>',
-}
+TRAY = 32          # canvas the client asks for
+SS = 4             # supersample, downsampled at the end
+CLEAR = (0, 0, 0, 0)
 
 
-def state_svg(state: str, theme: str) -> str:
-    if theme == "colored":
-        bg, fg = STATE_COLORS[state], "#ffffff"
-    elif theme == "dark":  # for dark trays: light glyph on subtle disc
-        bg, fg = "#e2e8f0", "#0f172a"
-    elif theme == "black":
-        bg, fg = "#000000", "#ffffff"
-    else:  # white
-        bg, fg = "#ffffff", "#000000"
-    glyph = GLYPHS[state].format(fg=fg)
-    return ('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" '
-            'viewBox="0 0 32 32">\n'
-            f'  <circle cx="16" cy="16" r="15" fill="{bg}"/>\n'
-            f'  {glyph}\n</svg>\n')
+def _glyph(d: "ImageDraw.ImageDraw", state: str, cx: float, cy: float,
+           r: float, ink: tuple) -> None:
+    """State glyph centred at (cx, cy) inside a badge of radius r."""
+    w = max(2, int(r * 0.26))
+    u = r * 0.5  # unit half-extent
+    if state == "ok":
+        d.line([(cx - u, cy), (cx - u * 0.25, cy + u * 0.7), (cx + u, cy - u * 0.7)],
+               fill=ink, width=w, joint="curve")
+    elif state == "error":
+        d.line([(cx - u, cy - u), (cx + u, cy + u)], fill=ink, width=w)
+        d.line([(cx + u, cy - u), (cx - u, cy + u)], fill=ink, width=w)
+    elif state == "information":
+        d.ellipse([cx - w * 0.7, cy - u - w * 0.4, cx + w * 0.7, cy - u + w], fill=ink)
+        d.line([(cx, cy - u * 0.25), (cx, cy + u)], fill=ink, width=w)
+    elif state == "offline":
+        d.ellipse([cx - u, cy - u, cx + u, cy + u], outline=ink, width=w)
+        d.line([(cx - u * 1.1, cy + u * 1.1), (cx + u * 1.1, cy - u * 1.1)], fill=ink, width=w)
+    elif state == "pause":
+        d.line([(cx - u * 0.5, cy - u), (cx - u * 0.5, cy + u)], fill=ink, width=w)
+        d.line([(cx + u * 0.5, cy - u), (cx + u * 0.5, cy + u)], fill=ink, width=w)
+    elif state == "sync":
+        box = [cx - u, cy - u, cx + u, cy + u]
+        d.arc(box, start=200, end=340, fill=ink, width=w)
+        d.arc(box, start=20, end=160, fill=ink, width=w)
+        a = u * 0.55
+        d.polygon([(cx + u, cy - u * 0.35), (cx + u + a * 0.6, cy - u * 0.35 - a), (cx + u - a * 0.6, cy - u * 0.35 - a)], fill=ink)
+        d.polygon([(cx - u, cy + u * 0.35), (cx - u - a * 0.6, cy + u * 0.35 + a), (cx - u + a * 0.6, cy + u * 0.35 + a)], fill=ink)
+
+
+def state_icon(mark: Image.Image, state: str, theme: str) -> Image.Image:
+    size = TRAY * SS
+    if theme == "colored":      # light menu bar
+        mark_ink, disc, glyph_ink = (35, 38, 47, 255), STATE_COLORS[state] + (255,), (255, 255, 255, 255)
+    elif theme == "dark":       # dark menu bar
+        mark_ink, disc, glyph_ink = (226, 232, 240, 255), STATE_COLORS[state] + (255,), (255, 255, 255, 255)
+    elif theme == "black":      # template: alpha only, glyph knocked out
+        mark_ink, disc, glyph_ink = (0, 0, 0, 255), (0, 0, 0, 255), CLEAR
+    else:                       # white
+        mark_ink, disc, glyph_ink = (255, 255, 255, 255), (255, 255, 255, 255), CLEAR
+
+    icon = Image.new("RGBA", (size, size), CLEAR)
+    inner = int(size * 0.92)
+    scale = inner / max(mark.size)
+    mw, mh = (max(1, round(dim * scale)) for dim in mark.size)
+    m = recolor(mark.resize((mw, mh), Image.LANCZOS), mark_ink)
+    icon.alpha_composite(m, ((size - mw) // 2, (size - mh) // 2))
+
+    d = ImageDraw.Draw(icon)
+    r = size * 0.23
+    cx, cy = size - r - size * 0.02, size - r - size * 0.02
+    gap = size * 0.035
+    # breathing room: the badge never touches the mark, in every flavor
+    d.ellipse([cx - r - gap, cy - r - gap, cx + r + gap, cy + r + gap], fill=CLEAR)
+    d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=disc)
+    _glyph(d, state, cx, cy, r, glyph_ink)
+    return icon.resize((TRAY, TRAY), Image.LANCZOS)
+
+
+def state_svg(mark: Image.Image, state: str, theme: str) -> str:
+    return png_as_svg(state_icon(mark, state, theme))
 
 
 def main() -> None:
@@ -228,8 +265,8 @@ def main() -> None:
     for theme in ("colored", "dark", "black", "white"):
         d = REPO / "overlay" / "common" / "theme" / theme
         d.mkdir(parents=True, exist_ok=True)
-        for state in GLYPHS:
-            (d / f"state-{state}.svg").write_text(state_svg(state, theme))
+        for state in STATE_COLORS:
+            (d / f"state-{state}.svg").write_text(state_svg(mark, state, theme))
 
     print("icon set regenerated under overlay/")
 
