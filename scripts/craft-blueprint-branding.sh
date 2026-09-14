@@ -33,8 +33,9 @@ oem() { sed -n "s/^set($1  *\"\\([^\"]*\\)\").*/\\1/p" "$OEM" | head -n1; }
 APP_NAME=$(oem APPLICATION_NAME)
 APP_VENDOR=$(oem APPLICATION_VENDOR)
 APP_DOMAIN=$(oem APPLICATION_DOMAIN)
-[ -n "$APP_NAME" ] && [ -n "$APP_VENDOR" ] && [ -n "$APP_DOMAIN" ] \
-    || { echo "blueprint-branding: APPLICATION_NAME/VENDOR/DOMAIN missing from $OEM" >&2; exit 1; }
+APP_ICON=$(oem APPLICATION_ICON_NAME)
+[ -n "$APP_NAME" ] && [ -n "$APP_VENDOR" ] && [ -n "$APP_DOMAIN" ] && [ -n "$APP_ICON" ] \
+    || { echo "blueprint-branding: APPLICATION_NAME/VENDOR/DOMAIN/ICON_NAME missing from $OEM" >&2; exit 1; }
 
 ENV_FILE="$REPO_ROOT/build/craft-branding.env"
 mkdir -p "$(dirname "$ENV_FILE")"
@@ -43,6 +44,7 @@ APPLICATION_NAME=$APP_NAME
 APPLICATION_VENDOR=$APP_VENDOR
 APPLICATION_WEBSITE=https://$APP_DOMAIN
 APPLICATION_DESCRIPTION=$APP_NAME sync client
+APPLICATION_ICON_NAME=$APP_ICON
 ENVEOF
 echo "blueprint-branding: $ENV branding from $OEM"
 sed 's/^/      /' "$ENV_FILE"
@@ -95,6 +97,19 @@ for path in sys.argv[1:]:
     # overriding setupname fixes it without touching either packager. Only
     # applies when the job asks for it, so Windows and Linux filenames are
     # untouched.
+    # The installer ships this file into the install directory as the
+    # uninstall entry's icon, so its NAME is handed to the customer too - it
+    # was arriving as owncloud.ico. Pointing the define at the branded icon
+    # also retires the CI step that copied our .ico onto that name.
+    icon_old = 'self.defines["icon"] = self.buildDir() / "src/gui/owncloud.ico"'
+    icon_new = ('self.defines["icon"] = self.buildDir() / '
+                'f"src/gui/{os.environ.get(\'APPLICATION_ICON_NAME\') or \'owncloud\'}.ico"')
+    if icon_old in src:
+        src = src.replace(icon_old, icon_new)
+        changed += 1
+    else:
+        print(f"blueprint-branding: NOT FOUND in {path}: the icon define")
+
     anchor = '        self.defines["company"] = os.environ.get("APPLICATION_VENDOR")'
     if "APPLICATION_SETUPNAME" not in src:
         for line in src.split("\n"):

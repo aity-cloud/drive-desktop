@@ -403,6 +403,17 @@ which is the `mac-sdk-quirks.sh` lesson applied ahead of time. Exercised
 against the real blueprint (fresh, already-applied, drifted, missing root)
 before it ever ran in CI.
 
+**The installer also SHIPS a file named after the icon define.** NSIS writes
+`@{iconname}` into the install directory and points the uninstall entry's
+`DisplayIcon` at it, and the blueprint hardcodes
+`buildDir/src/gui/owncloud.ico` - so `owncloud.ico` landed in Program Files
+on every install. Found by extracting a built installer with `7z x`
+(p7zip reads NSIS), which is the only way to see inside one: the whole NSIS
+header is solid-LZMA, so `strings` finds NOTHING in any encoding, and a
+grep for "owncloud" returning 0 proves only that the file is compressed.
+The icon define now takes `APPLICATION_ICON_NAME` from the environment, and
+the CI step that used to copy our .ico onto upstream's name is gone with it.
+
 **git-bash on the Windows runner resolves `python`, NOT `python3`** - the
 PowerShell side had already proven `python --version`, so the gap only
 surfaced inside a repo script, 26 minutes into a purchased-minutes job.
