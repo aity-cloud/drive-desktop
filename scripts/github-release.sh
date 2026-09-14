@@ -58,7 +58,16 @@ if [ -z "$RELEASE_ID" ]; then
         --argjson pre "$([ "$MODE" = prerelease ] && echo true || echo false)" \
         '{tag_name: $tag, name: $name, body: $body, prerelease: $pre}')")
     RELEASE_ID=$(echo "$RELEASE" | jq -r '.id // empty')
-    [ -n "$RELEASE_ID" ] || { echo "github-release: creating the release failed: $RELEASE" >&2; exit 1; }
+    if [ -z "$RELEASE_ID" ]; then
+        echo "github-release: creating the release failed: $RELEASE" >&2
+        # GitHub names the missing permission in a header, and the token
+        # kind is the other half of the diagnosis - print both, never the
+        # token itself. github_pat_ = fine-grained, ghp_ = classic.
+        echo "github-release: token kind: ${GITHUB_RELEASES_TOKEN%%_*}_..." >&2
+        api -o /dev/null -D - -X POST "$API/releases" -d '{"tag_name":"probe"}' 2>/dev/null \
+            | grep -iE '^(x-accepted-github-permissions|x-oauth-scopes|x-github-request-id|HTTP/)' >&2 || true
+        exit 1
+    fi
     echo "github-release: created release $RELEASE_ID for $TAG ($MODE)"
 elif [ "$MODE" = promote ]; then
     api -X PATCH "$API/releases/$RELEASE_ID" -d "$(jq -n \
