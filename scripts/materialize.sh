@@ -72,6 +72,12 @@ cp -a "$REPO_ROOT/overlay/common/." "$OUT_DIR/branding/"
 cp -a "$REPO_ROOT/overlay/$ENV/." "$OUT_DIR/branding/"
 [ -f "$OUT_DIR/branding/OEM.cmake" ] || { echo "materialize: overlay produced no branding/OEM.cmake" >&2; exit 1; }
 
+# Upstream's trademark in user-visible TRANSLATION values, every locale (the
+# iOS Factory does the same with debrand-strings.py). Values only; the About
+# page is Theme::about() in the OEM theme, so its upstream translations are
+# dead and left alone. Fails if any other value still carries it.
+python3 "$REPO_ROOT/scripts/debrand-translations.py" "$OUT_DIR"
+
 # --- 4. patches (target: none) ---------------------------------------------
 shopt -s nullglob
 patches=("$REPO_ROOT"/patches/*.patch)

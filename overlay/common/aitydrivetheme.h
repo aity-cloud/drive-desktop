@@ -17,6 +17,8 @@
 
 #include "common/depreaction.h"
 #include "resources/resources.h"
+#include "common/utility.h"
+#include "common/version.h"
 #include "theme.h"
 
 #include <QColor>
@@ -89,6 +91,27 @@ public:
     {
         return Resources::themeUniversalIcon(QStringLiteral("wizard_logo"));
     }
+
+    // The About page. Upstream's names its authors, links central.owncloud.com
+    // and carries the ownCloud GmbH copyright as the headline. Ours leads with
+    // the product and AITY CLOUD SRL; the upstream attribution stays, in the
+    // small print at the bottom, because GPLv2 section 2(c) keeps an accurate
+    // legal notice reachable and the copyright on the code is theirs.
+    QString about() const override
+    {
+        return tr("<p>%1 version %2.</p>"
+                  "<p>Help and account: <a href=\"https://%3\">https://%3</a></p>"
+                  "<p>Copyright &copy; 2026 AITY CLOUD SRL. %1 and the Aity logo are trademarks of AITY CLOUD SRL.</p>"
+                  "<p><small>Open source: %1 is built on the ownCloud desktop client, &copy; ownCloud GmbH, "
+                  "licensed under the GNU General Public License version 2. Complete corresponding source: "
+                  "<a href=\"https://github.com/aity-cloud/drive-desktop\">github.com/aity-cloud/drive-desktop</a></small></p>"
+                  "<p><small>%4</small></p>")
+            .arg(Utility::escape(appNameGUI()), Utility::escape(Version::displayString()),
+                Utility::escape(QStringLiteral(APPLICATION_DOMAIN)), aboutVersions(Theme::VersionFormat::RichText));
+    }
+
+    // No github.com/owncloud commit links behind the build hash.
+    bool aboutShowCopyright() const override { return false; }
 };
 
 } // namespace OCC
