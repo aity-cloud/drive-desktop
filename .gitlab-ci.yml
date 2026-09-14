@@ -352,6 +352,20 @@ build:macos:
     # A LaunchAgent cannot script Finder, so that times out (-1712) AFTER the
     # whole client has already built. Full story in the script.
     - bash scripts/mac-dmg-headless.sh
+    # The DMG's volume name - what the user sees once it is mounted - came
+    # from the blueprint's archive name, so mounting our release showed
+    # "owncloud-client-HEAD-<n>-macos-clang-arm64". Same script and same
+    # reason as the Windows installer: Craft takes this branding from the
+    # blueprint, never from OEM.cmake. APPLICATION_SETUPNAME is exported
+    # here only - it also decides the packaged FILE name, and on Windows
+    # and Linux that name is already correct.
+    - bash scripts/craft-blueprint-branding.sh "$HOME/craft" "$MAC_ENV"
+    - |
+      # split on the FIRST = only: the values contain spaces, so `.` would
+      # try to run "Drive" as a command
+      while IFS='=' read -r k v; do [ -n "$k" ] && export "$k=$v"; done < build/craft-branding.env
+      export APPLICATION_SETUPNAME="$APPLICATION_NAME"
+      echo "dmg volume: $APPLICATION_SETUPNAME"
     # Craft looks for <APPLICATION_EXECUTABLE>.app, and on macOS the OEM
     # branding sets that to the display name ("Aity Drive.app"). Read both
     # from the same OEM.cmake the build uses so the two can never disagree.

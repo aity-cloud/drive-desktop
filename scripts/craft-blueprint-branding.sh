@@ -82,10 +82,32 @@ for path in sys.argv[1:]:
         lhs, rhs = literal.split(" = ", 1)
         src = src.replace(literal, f'{lhs} = os.environ.get("{var}") or {rhs}')
         changed += 1
+    # The DMG's VOLUME name - what the user sees after mounting - is derived
+    # from defines["setupname"], which defaults to the blueprint's archive
+    # name (owncloud-client-HEAD-<n>-macos-clang-arm64). That holds on both
+    # the old create-dmg path and the dmgbuild one the fork moved to, so
+    # overriding setupname fixes it without touching either packager. Only
+    # applies when the job asks for it, so Windows and Linux filenames are
+    # untouched.
+    anchor = '        self.defines["company"] = os.environ.get("APPLICATION_VENDOR")'
+    if "APPLICATION_SETUPNAME" not in src:
+        for line in src.split("\n"):
+            if line.startswith(anchor):
+                src = src.replace(
+                    line,
+                    line
+                    + '\n        if os.environ.get("APPLICATION_SETUPNAME"):'
+                    + '\n            self.defines["setupname"] = self.packageDestinationDir() / os.environ["APPLICATION_SETUPNAME"]',
+                )
+                changed += 1
+                break
+        else:
+            print(f"blueprint-branding: NO company line to anchor setupname to in {path}")
+
     if changed:
         open(path, "w", encoding="utf-8").write(src)
         handled += 1
-    print(f"blueprint-branding: rewrote {changed}/{len(SUBS)} literal(s) in {path}")
+    print(f"blueprint-branding: rewrote {changed} branding site(s) in {path}")
 
 # A silent no-op here ships an installer branded ownCloud, so refuse to be one.
 if handled == 0:
