@@ -182,7 +182,14 @@ build:windows:
       allow_failure: true
   variables:
     CRAFT_TARGET: windows-cl-msvc2022-x86_64
-    WIN_ENV: production
+  # Both Environment builds from one pipeline, like build:macos. A single job
+  # plus a job variable could not express that: the play API silently DROPS
+  # job_variables_attributes, so a staging run needed a whole second pipeline
+  # carrying a pipeline-level variable and one such attempt built production
+  # twice instead. No resource_group: each leg gets its own fresh SaaS VM.
+  parallel:
+    matrix:
+      - WIN_ENV: [staging, production]
   script:
     # preflight: fail fast (minutes are purchased) if the toolchain is absent
     - '& "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -format json | Out-Host'
