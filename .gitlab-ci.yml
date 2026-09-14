@@ -230,10 +230,22 @@ build:windows:
       }
       $env:PATH = "$gitfull\cmd;$env:PATH"
       Write-Host "PATH now prefers: $gitfull\cmd ($(& git --version))"
-    # git-bash has its own PATH view: it resolves `python` but NOT `python3`,
-    # which killed a job 26 minutes in. Anything the repo's sh scripts need
-    # gets proven here, in seconds, not after the toolchain bootstrap.
-    - '& $env:AITY_BASH -c "command -v python3 || command -v python || { echo ''no python visible to git-bash''; exit 1; }"'
+    # This runner installs python as `python` only, but every repo script is
+    # written for Unix where the name is `python3` - so each one breaks the
+    # first time it calls it, minutes in, long after the PowerShell
+    # `python --version` above looked fine. Normalise the environment ONCE
+    # instead of defending in every script: this cost a 26 minute job in
+    # craft-blueprint-branding.sh and an 8 minute one in materialize.sh,
+    # hours apart.
+    - |
+      $pydir = Split-Path (Get-Command python).Source
+      if (-not (Test-Path "$pydir\python3.exe")) {
+        Copy-Item "$pydir\python.exe" "$pydir\python3.exe"
+        Write-Host "provided python3.exe beside $pydir\python.exe"
+      }
+      $seen = & $env:AITY_BASH -c "command -v python3"
+      if (-not $seen) { throw "git-bash still cannot resolve python3" }
+      Write-Host "git-bash python3 resolves to: $seen"
     - '& $env:AITY_BASH scripts/materialize.sh $env:WIN_ENV'
     - git clone --depth=1 https://invent.kde.org/kde/craftmaster.git "$env:USERPROFILE/craft/CraftMaster/CraftMaster"
     - $env:AITY_MATERIALIZED = "$env:CI_PROJECT_DIR/build/materialized/$env:WIN_ENV" -replace '\\','/'

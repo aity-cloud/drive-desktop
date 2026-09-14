@@ -414,13 +414,19 @@ grep for "owncloud" returning 0 proves only that the file is compressed.
 The icon define now takes `APPLICATION_ICON_NAME` from the environment, and
 the CI step that used to copy our .ico onto upstream's name is gone with it.
 
-**git-bash on the Windows runner resolves `python`, NOT `python3`** - the
-PowerShell side had already proven `python --version`, so the gap only
-surfaced inside a repo script, 26 minutes into a purchased-minutes job.
-The script now takes whichever exists, and the preflight asks git-bash for
-one in the first seconds. The general rule: a tool the repo's sh scripts
-need has to be proven THROUGH git-bash, not through PowerShell - the two
-have different PATH views.
+**The Windows runner has `python` but no `python3`, and every repo script
+is written for Unix.** The PowerShell `python --version` in the preflight
+proves nothing about this: the two have different PATH views, and the gap
+only shows up inside a repo script. It bit twice in one afternoon, hours
+apart - `craft-blueprint-branding.sh` 26 minutes into a job, then
+`materialize.sh` at 8 minutes, the second time because a commit added a
+`python3` call to a script that had always worked on Windows.
+
+Defending inside each script does not scale: the next script someone writes
+will assume `python3` like every other Unix script in the repo, and nobody
+will think about Windows. So the preflight now COPIES `python.exe` to
+`python3.exe` and asserts git-bash can resolve it, in the first seconds.
+The runner environment is the anomaly; normalise it once.
 
 Worth checking on a Bump: `subinfo.displayName`, `subinfo.description`,
 `subinfo.webpage` and `defines["company"]` are the four literals. An upstream
