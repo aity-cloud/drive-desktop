@@ -548,9 +548,12 @@ publish:staging-prerelease:
     # (package:linux), dist/macos-staging/* the notarised DMG when the Mac
     # job ran - all merged into this job's workspace by needs.
     - |
-      set -- dist/staging/*
-      for d in dist/macos-staging dist/windows-staging; do
-        for f in "$d"/*; do [ -e "$f" ] && set -- "$@" "$f"; done
+      set --
+      for d in dist/staging dist/macos-staging dist/windows-staging; do
+        for f in "$d"/*.AppImage "$d"/*.zsync "$d"/*.deb "$d"/*.rpm "$d"/*.dmg \
+                 "$d"/*.exe "$d"/*.tar.gz "$d"/*.sha256; do
+          [ -e "$f" ] && set -- "$@" "$f"
+        done
       done
       echo "attaching $# staging asset(s)"
       bash scripts/github-release.sh prerelease "$CI_COMMIT_TAG" "$@"
@@ -612,13 +615,23 @@ promote:
       # precondition: the installer is UNSIGNED until Azure Artifact Signing
       # is provisioned (decision 2026-09-15, publisher-accounts.md section 4),
       # so a release without it is a real choice rather than an accident.
-      set -- dist/production/* dist/macos-production/*
-      if ls dist/windows-production/* >/dev/null 2>&1; then
-        set -- "$@" dist/windows-production/*
-        echo "including the Windows installer (unsigned - SmartScreen will warn)"
-      else
-        echo "NO Windows installer in this release - build:windows: [production] was not played"
-      fi
+      # Publish the ARTIFACTS, not everything Craft left in the directory.
+      # It also drops a manifest.json and a blueprint-named .7z debug archive
+      # into every platform dir: two of those manifests collide on one asset
+      # name, which failed promote after the release was already public, and
+      # the .7z would put `HEAD-68-windows-cl-msvc2022` on a customer listing
+      # (2026-09-15).
+      set --
+      for d in dist/production dist/macos-production dist/windows-production; do
+        for f in "$d"/*.AppImage "$d"/*.zsync "$d"/*.deb "$d"/*.rpm "$d"/*.dmg \
+                 "$d"/*.exe "$d"/*.tar.gz "$d"/*.sha256; do
+          [ -e "$f" ] && set -- "$@" "$f"
+        done
+      done
+      ls dist/windows-production/*.exe >/dev/null 2>&1 \
+        && echo "including the Windows installer (unsigned - SmartScreen will warn)" \
+        || echo "NO Windows installer in this release - build:windows: [production] was not played"
+      echo "publishing $# asset(s)"
       bash scripts/github-release.sh promote "$CI_COMMIT_TAG" "$@"
     # update feeds to the mirror's gh-pages branch. Same SSH setup as
     # mirror:github (meta/ci/mirror.yml): pinned host keys, the per-repo

@@ -27,6 +27,20 @@ shift 2
 [ $# -gt 0 ] || { echo "github-release: no files to upload" >&2; exit 2; }
 [ -n "${GITHUB_RELEASES_TOKEN:-}" ] || { echo "github-release: GITHUB_RELEASES_TOKEN is not set" >&2; exit 2; }
 
+# Two inputs with the same basename cannot both be published: GitHub keys an
+# asset by name. Refusing up front beats the old behaviour, where the second
+# one deleted a stale id from the snapshot below and then failed the whole
+# job on a bare `curl: (22) 422` AFTER the release was already public
+# (2026-09-15: dist/production and dist/windows-production each carry a
+# manifest.json).
+dupes=$(for f in "$@"; do basename "$f"; done | sort | uniq -d)
+if [ -n "$dupes" ]; then
+    echo "github-release: refusing to publish two files under one name:" >&2
+    echo "$dupes" | sed 's/^/  /' >&2
+    exit 1
+fi
+
+
 REPO="${GITHUB_RELEASE_REPO:-aity-cloud/drive-desktop}"
 API="https://api.github.com/repos/$REPO"
 
