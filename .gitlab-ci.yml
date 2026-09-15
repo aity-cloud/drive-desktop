@@ -568,6 +568,8 @@ promote:
     - publish:staging-prerelease
     - job: "build:macos: [production]"
       optional: true
+    - job: "build:windows: [production]"
+      optional: true
   rules:
     - if: $CI_COMMIT_TAG && $GITHUB_RELEASES_TOKEN
       when: manual
@@ -592,7 +594,18 @@ promote:
       zsyncmake -u "https://github.com/$REPO/releases/download/$CI_COMMIT_TAG/$APPIMAGE" \
         -o "dist/production/$APPIMAGE.zsync" "dist/production/$APPIMAGE"
       bash scripts/gen-update-feeds.sh --version "$VERSION_FULL" --tag "$CI_COMMIT_TAG" --appimage "$APPIMAGE"
-      bash scripts/github-release.sh promote "$CI_COMMIT_TAG" dist/production/* dist/macos-production/*
+      # Windows rides along when its job ran. Unlike macOS it is not a
+      # precondition: the installer is UNSIGNED until Azure Artifact Signing
+      # is provisioned (decision 2026-09-15, publisher-accounts.md section 4),
+      # so a release without it is a real choice rather than an accident.
+      set -- dist/production/* dist/macos-production/*
+      if ls dist/windows-production/* >/dev/null 2>&1; then
+        set -- "$@" dist/windows-production/*
+        echo "including the Windows installer (unsigned - SmartScreen will warn)"
+      else
+        echo "NO Windows installer in this release - build:windows: [production] was not played"
+      fi
+      bash scripts/github-release.sh promote "$CI_COMMIT_TAG" "$@"
     # update feeds to the mirror's gh-pages branch. Same SSH setup as
     # mirror:github (meta/ci/mirror.yml): pinned host keys, the per-repo
     # write deploy key, CI as the only writer of the mirror.

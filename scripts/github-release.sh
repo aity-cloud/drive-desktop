@@ -43,7 +43,15 @@ case "$MODE" in
         ;;
     promote)
         NAME="$TAG"
-        BODY="Aity Drive desktop client $TAG. The staging assets (aity-drive-staging-*) target https://drive.aity.works and exist for verification; install the aity-drive-* assets. Complete corresponding source is attached (ADR 0004)."
+        BODY="Aity Drive desktop client $TAG.
+
+## Which file
+
+- **macOS** (Apple silicon): \`.dmg\` - signed with our Developer ID and notarised by Apple, so it opens with no warning.
+- **Linux**: \`.AppImage\` (self-updating, with its \`.zsync\`), \`.deb\`, \`.rpm\`.
+- **Windows**: \`.exe\` installer. **It is not code-signed yet**, so Windows SmartScreen shows \"Windows protected your PC\" - choose *More info* then *Run anyway*. Verify the \`.sha256\` beside it if you want certainty. Signing arrives in a later release.
+
+The \`aity-drive-staging-*\` assets target https://drive.aity.works and exist for verification; install the \`aity-drive-*\` ones. Complete corresponding source is attached (ADR 0004)."
         ;;
     *) echo "github-release: unknown mode '$MODE'" >&2; exit 2 ;;
 esac
