@@ -538,6 +538,8 @@ publish:staging-prerelease:
     # the DMG to the same release (github-release.sh finds-or-creates).
     - job: "build:macos: [staging]"
       optional: true
+    - job: "build:windows: [staging]"
+      optional: true
   rules:
     - if: $CI_COMMIT_TAG && $GITHUB_RELEASES_TOKEN
   script:
@@ -547,7 +549,10 @@ publish:staging-prerelease:
     # job ran - all merged into this job's workspace by needs.
     - |
       set -- dist/staging/*
-      for f in dist/macos-staging/*; do [ -e "$f" ] && set -- "$@" "$f"; done
+      for d in dist/macos-staging dist/windows-staging; do
+        for f in "$d"/*; do [ -e "$f" ] && set -- "$@" "$f"; done
+      done
+      echo "attaching $# staging asset(s)"
       bash scripts/github-release.sh prerelease "$CI_COMMIT_TAG" "$@"
 
 # The single manual act that makes a release public (meta/CONTEXT.md
