@@ -85,10 +85,13 @@ else
     : > public/update/windows/index.html
 fi
 
-# Sparkle appcast skeleton for macOS. Enclosure URL + EdDSA signature
-# (sparkle:edSignature) are filled in once the macOS build and Developer ID
-# signing exist (runbook: meta/docs/runbooks/publisher-accounts.md); until
-# then the feed is a valid appcast with no items = no update offered.
+# Sparkle appcast for macOS. An item is emitted ONLY with a real EdDSA
+# signature, which needs two things we do not have yet: a Sparkle key pair,
+# and its public half as SUPublicEDKey in the app bundle. Without the public
+# key Sparkle verifies nothing and refuses every update anyway, so a
+# placeholder signature would mean the app downloads an update and then fails
+# on it - worse than offering none. A valid appcast with no items offers no
+# update, which is the honest state until MAC_ED_SIGNATURE is passed in.
 cat > public/update/macos/appcast.xml <<XML
 <?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
@@ -97,7 +100,7 @@ cat > public/update/macos/appcast.xml <<XML
         <link>https://aity-cloud.github.io/drive-desktop/update/macos/appcast.xml</link>
         <description>Aity Drive desktop client updates for macOS</description>
         <language>en</language>
-$(if [ -n "$MACOS_PKG" ]; then cat <<ITEM
+$(if [ -n "$MACOS_PKG" ] && [ -n "${MAC_ED_SIGNATURE:-}" ]; then cat <<ITEM
         <item>
             <title>Aity Drive $VERSION</title>
             <link>$RELEASE_WEB</link>
@@ -106,8 +109,8 @@ $(if [ -n "$MACOS_PKG" ]; then cat <<ITEM
             <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
             <pubDate>$(date -R)</pubDate>
             <enclosure url="$DL/$MACOS_PKG"
-                       sparkle:edSignature="TODO-FILLED-BY-PROMOTE-ONCE-SIGNING-EXISTS"
-                       length="0"
+                       sparkle:edSignature="$MAC_ED_SIGNATURE"
+                       length="${MACOS_PKG_BYTES:-0}"
                        type="application/octet-stream"/>
         </item>
 ITEM
@@ -116,4 +119,7 @@ fi)
 </rss>
 XML
 
+if [ -n "$MACOS_PKG" ] && [ -z "${MAC_ED_SIGNATURE:-}" ]; then
+    echo "gen-update-feeds: macOS appcast has NO item - MAC_ED_SIGNATURE is unset, so in-app update is not offered on macOS (Sparkle key pair still to do)"
+fi
 echo "gen-update-feeds: wrote public/update/{linux,windows}/index.html and public/update/macos/appcast.xml for $TAG ($VERSION)"

@@ -593,7 +593,16 @@ promote:
         --transform "s,^production,aity-drive-$VERSION_FULL-source," production
       zsyncmake -u "https://github.com/$REPO/releases/download/$CI_COMMIT_TAG/$APPIMAGE" \
         -o "dist/production/$APPIMAGE.zsync" "dist/production/$APPIMAGE"
-      bash scripts/gen-update-feeds.sh --version "$VERSION_FULL" --tag "$CI_COMMIT_TAG" --appimage "$APPIMAGE"
+      # Feed the generator every artifact this release actually has, so the
+      # Windows and macOS feeds stop being valid-but-empty. Missing ones are
+      # simply omitted - the script treats each as optional.
+      FEED_ARGS="--version $VERSION_FULL --tag $CI_COMMIT_TAG --appimage $APPIMAGE"
+      WIN_EXE=$(basename dist/windows-production/*.exe 2>/dev/null || true)
+      [ -n "${WIN_EXE:-}" ] && [ -e "dist/windows-production/$WIN_EXE" ] && FEED_ARGS="$FEED_ARGS --windows-installer $WIN_EXE"
+      MAC_DMG=$(basename dist/macos-production/*.dmg 2>/dev/null || true)
+      [ -n "${MAC_DMG:-}" ] && [ -e "dist/macos-production/$MAC_DMG" ] && FEED_ARGS="$FEED_ARGS --macos-pkg $MAC_DMG"
+      echo "update feeds: $FEED_ARGS"
+      bash scripts/gen-update-feeds.sh $FEED_ARGS
       # Windows rides along when its job ran. Unlike macOS it is not a
       # precondition: the installer is UNSIGNED until Azure Artifact Signing
       # is provisioned (decision 2026-09-15, publisher-accounts.md section 4),
